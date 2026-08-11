@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}Dashboard - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">{{ 'Today' if log_date == today else 'Logged day' }}</p>
+      <h1>{{ display_date }}</h1>
+    </div>
+    <div class="date-nav">
+      <a class="icon-btn" href="{{ url_for('dashboard', date=prev_date) }}">{{ icons.chevron_left() }}</a>
+      <form method="get" action="{{ url_for('dashboard') }}">
+        <input type="date" name="date" value="{{ log_date }}" onchange="this.form.submit()">
+      </form>
+      <a class="icon-btn" href="{{ url_for('dashboard', date=next_date) }}">{{ icons.chevron_right() }}</a>
+      {% if log_date != today %}
+        <a class="pill-btn" href="{{ url_for('dashboard', date=today) }}">Today</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <section class="hero">
+    <div class="ring-wrap">
+      {% if goal %}
+        <div class="ring" style="--angle: {{ ring_angle }}deg; --ring-color: {{ 'var(--coral)' if over_goal else 'var(--lime)' }}"></div>
+      {% else %}
+        <div class="ring no-goal"></div>
+      {% endif %}
+      <div class="ring-center">
+        <span class="ring-value">{{ "%.0f"|format(totals.consumed) }}</span>
+        <span class="ring-unit">kcal in</span>
+      </div>
+    </div>
+    <div class="hero-stats">
+      <div class="stat">
+        <span class="stat-icon burn">{{ icons.dumbbell() }}</span>
+        <div>
+          <span class="stat-value">{{ "%.0f"|format(totals.burned) }}</span>
+          <span class="stat-label">burned</span>
+        </div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon net">{{ icons.pulse() }}</span>
+        <div>
+          <span class="stat-value">{{ "%.0f"|format(totals.net) }}</span>
+          <span class="stat-label">net calories</span>
+        </div>
+      </div>
+      {% if goal %}
+      <div class="stat">
+        <span class="stat-icon {{ 'over' if over_goal else 'goal' }}">{{ icons.flame() }}</span>
+        <div>
+          <span class="stat-value">{{ "%.0f"|format(remaining) }}</span>
+          <span class="stat-label">{{ 'over' if over_goal else 'remaining' }} of {{ "%.0f"|format(goal) }}</span>
+        </div>
+      </div>
+      {% else %}
+        <a class="stat-goal-empty" href="{{ url_for('settings') }}">{{ icons.plus() }} Set a daily goal</a>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Macro Breakdown</h2>
+    {% if totals.protein or totals.carbs or totals.fat %}
+      <div class="macro-bar">
+        <span class="seg protein" style="width: {{ totals.macro_pct.protein }}%"></span>
+        <span class="seg carbs" style="width: {{ totals.macro_pct.carbs }}%"></span>
+        <span class="seg fat" style="width: {{ totals.macro_pct.fat }}%"></span>
+      </div>
+      <div class="macro-legend">
+        <span><i class="dot protein"></i>Protein &middot; {{ "%.1f"|format(totals.protein) }}g</span>
+        <span><i class="dot carbs"></i>Carbs &middot; {{ "%.1f"|format(totals.carbs) }}g</span>
+        <span><i class="dot fat"></i>Fat &middot; {{ "%.1f"|format(totals.fat) }}g</span>
+      </div>
+    {% else %}
+      <p class="empty">Log a food to see your macro breakdown.</p>
+    {% endif %}
+  </section>
+
+  <div class="log-grid">
+    <section class="log-card food-theme">
+      <div class="log-card-head"><h2>{{ icons.fork() }} Food Log</h2></div>
+      <form method="post" action="{{ url_for('log_food') }}" class="quick-add">
+        <input type="hidden" name="log_date" value="{{ log_date }}">
+        <select name="food_id" required>
+          <option value="" disabled selected>Select food&hellip;</option>
+          {% for f in foods %}
+            <option value="{{ f.id }}">{{ f.name }} &middot; {{ "%.0f"|format(f.calories) }} kcal</option>
+          {% endfor %}
+        </select>
+        <input type="number" step="0.1" min="0" name="servings" placeholder="Qty" value="1" required>
+        <button type="submit">{{ icons.plus() }}</button>
+      </form>
+      {% if not foods %}
+        <p class="empty">No foods yet. <a href="{{ url_for('new_food') }}">Add one</a>.</p>
+      {% elif not totals.food_rows %}
+        <p class="empty">Nothing logged yet today.</p>
+      {% endif %}
+      <ul class="log-list">
+        {% for row in totals.food_rows %}
+        <li class="log-item" style="animation-delay: {{ loop.index0 * 40 }}ms">
+          <div class="log-item-main">
+            <span class="log-item-name">{{ row.name }}</span>
+            <span class="log-item-meta">{{ row.servings }} &times; {{ row.serving_unit }}</span>
+          </div>
+          <span class="log-item-kcal">{{ "%.0f"|format(row.calories) }}</span>
+          <form method="post" action="{{ url_for('delete_food_log', log_id=row.id) }}">
+            <input type="hidden" name="log_date" value="{{ log_date }}">
+            <button class="icon-btn danger" type="submit">{{ icons.trash() }}</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="log-card exercise-theme">
+      <div class="log-card-head"><h2>{{ icons.dumbbell() }} Exercise Log</h2></div>
+      <form method="post" action="{{ url_for('log_exercise') }}" class="quick-add">
+        <input type="hidden" name="log_date" value="{{ log_date }}">
+        <select name="exercise_id" required>
+          <option value="" disabled selected>Select exercise&hellip;</option>
+          {% for e in exercises %}
+            <option value="{{ e.id }}">{{ e.name }} &middot; {{ "%.0f"|format(e.calories_per_unit) }} kcal/{{ e.unit }}</option>
+          {% endfor %}
+        </select>
+        <input type="number" step="0.1" min="0" name="quantity" placeholder="Qty" value="1" required>
+        <button type="submit">{{ icons.plus() }}</button>
+      </form>
+      {% if not exercises %}
+        <p class="empty">No exercises yet. <a href="{{ url_for('new_exercise') }}">Add one</a>.</p>
+      {% elif not totals.exercise_rows %}
+        <p class="empty">Nothing logged yet today.</p>
+      {% endif %}
+      <ul class="log-list">
+        {% for row in totals.exercise_rows %}
+        <li class="log-item" style="animation-delay: {{ loop.index0 * 40 }}ms">
+          <div class="log-item-main">
+            <span class="log-item-name">{{ row.name }}</span>
+            <span class="log-item-meta">{{ row.quantity }} {{ row.unit }}</span>
+          </div>
+          <span class="log-item-kcal">{{ "%.0f"|format(row.calories_burned) }}</span>
+          <form method="post" action="{{ url_for('delete_exercise_log', log_id=row.id) }}">
+            <input type="hidden" name="log_date" value="{{ log_date }}">
+            <button class="icon-btn danger" type="submit">{{ icons.trash() }}</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Vitamins &amp; Minerals</h2>
+    {% if totals.protein or totals.carbs or totals.fat %}
+      {% for group, items in totals.nutrients.values()|groupby('group') %}
+        <h3 class="nutrient-group-title">{{ group }}</h3>
+        <div class="nutrient-rows">
+          {% for n in items %}
+          <div class="nutrient-row">
+            <span class="nutrient-name">{{ n.label }}</span>
+            <span class="nutrient-amount">{{ "%.1f"|format(n.total) }}{{ n.unit }}</span>
+            {% if n.pct is not none %}
+              <span class="nutrient-bar-track"><span class="nutrient-bar-fill" style="width: {{ n.pct }}%"></span></span>
+              <span class="nutrient-pct">{{ "%.0f"|format(n.pct) }}%</span>
+            {% else %}
+              <span class="nutrient-bar-track"></span>
+              <span class="nutrient-pct">&mdash;</span>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">Log a food to see your vitamin and mineral breakdown.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Health Monitor</title>
+<meta name="theme-color" content="#0a0e0c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Health">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <span class="topbar-mark"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c4 0 6.5-2.6 6.5-6.2 0-2.6-1.6-4.3-2.7-6-.2 1.8-1 2.7-1.8 2.7-1.4 0-1.6-2.3-1.6-4-2.5 1.7-4.4 5-4.4 8 0 3.3 1.9 5.5 4 5.5z"/></svg></span>
+      <span class="topbar-title" id="pageTitle">Dashboard</span>
+      <span style="width:22px"></span>
+    </header>
+    <main id="view" class="view"></main>
+    <nav class="tabbar">
+      <a class="tab" data-tab="dashboard" href="#/">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 7 4-14 2 7h6"/></svg>
+        <span>Today</span>
+      </a>
+      <a class="tab" data-tab="foods" href="#/foods">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v6a2 2 0 0 0 4 0V2"/><path d="M8 8v14"/><path d="M17 2c-2 1.5-2 4-2 6s1 3 2 3 2-1 2-3-0-4.5-2-6z"/><path d="M17 11v11"/></svg>
+        <span>Foods</span>
+      </a>
+      <a class="tab" data-tab="exercises" href="#/exercises">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="9" width="3" height="6" rx="1"/><rect x="19.5" y="9" width="3" height="6" rx="1"/><rect x="5.5" y="7" width="2.5" height="10" rx="1"/><rect x="16" y="7" width="2.5" height="10" rx="1"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        <span>Exercise</span>
+      </a>
+      <a class="tab" data-tab="history" href="#/history">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5l3.5 2"/></svg>
+        <span>History</span>
+      </a>
+      <a class="tab" data-tab="settings" href="#/settings">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.25"/><path d="M12 2.5v3.2M12 18.3v3.2M4.6 4.6l2.3 2.3M17.1 17.1l2.3 2.3M2.5 12h3.2M18.3 12h3.2M4.6 19.4l2.3-2.3M17.1 6.9l2.3-2.3"/></svg>
+        <span>Settings</span>
+      </a>
+    </nav>
+  </div>
+  <div id="toast" class="toast"></div>
+
+  <script type="module" src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded) return;
+        reloaded = true;
+        location.reload();
+      });
+      window.addEventListener("load", () => {
+        navigator.serviceWorker
+          .register("sw.js")
+          .then((reg) => reg.update())
+          .catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}History - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Last 60 logged days</p>
+      <h1>History</h1>
+    </div>
+  </div>
+
+  {% if rows %}
+  <div class="history-list">
+    {% for row in rows %}
+    <a class="history-row" href="{{ url_for('dashboard', date=row.log_date) }}" style="animation-delay: {{ loop.index0 * 25 }}ms">
+      <span class="history-date">{{ row.log_date }}</span>
+      <span class="history-bars">
+        <span class="history-bar-track"><span class="history-bar-fill consumed" style="width: {{ row.consumed_pct }}%"></span></span>
+        <span class="history-bar-track"><span class="history-bar-fill burned" style="width: {{ row.burned_pct }}%"></span></span>
+      </span>
+      <span class="history-net">{{ "%.0f"|format(row.net) }} <small>kcal</small></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">No history yet. Log a food or exercise to get started.</p>
+  {% endif %}
+{% endblock %}

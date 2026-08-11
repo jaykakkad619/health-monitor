@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}Exercises - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Your library</p>
+      <h1>Exercises</h1>
+    </div>
+    <a class="btn primary" href="{{ url_for('new_exercise') }}">{{ icons.plus() }} Add Exercise</a>
+  </div>
+
+  {% if exercises %}
+  <div class="item-grid">
+    {% for e in exercises %}
+    <div class="item-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
+      <div class="item-card-top">
+        <div>
+          <div class="item-name">{{ e.name }}</div>
+          <div class="item-sub">per {{ e.unit }}</div>
+        </div>
+        <div class="item-kcal exercise">{{ "%.1f"|format(e.calories_per_unit) }}<span>kcal</span></div>
+      </div>
+      <div class="item-actions">
+        <a href="{{ url_for('edit_exercise', exercise_id=e.id) }}">{{ icons.pencil() }} Edit</a>
+        <form method="post" action="{{ url_for('delete_exercise', exercise_id=e.id) }}" onsubmit="return confirm('Delete {{ e.name }}? This also removes its log entries.');">
+          <button type="submit">{{ icons.trash() }} Delete</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">No exercises yet. <a href="{{ url_for('new_exercise') }}">Add your first one</a>.</p>
+  {% endif %}
+{% endblock %}

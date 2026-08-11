@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Health Monitor{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% import "_icons.html" as icons %}
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">{{ icons.flame() }}</span>
+        <span class="brand-text">Health<br><em>Monitor</em></span>
+      </div>
+      <nav class="nav">
+        <a class="nav-item {{ 'active' if request.path == '/' }}" href="{{ url_for('dashboard') }}">{{ icons.pulse() }}<span>Dashboard</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/foods') }}" href="{{ url_for('foods') }}">{{ icons.fork() }}<span>Foods</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/exercises') }}" href="{{ url_for('exercises') }}">{{ icons.dumbbell() }}<span>Exercises</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/history') }}" href="{{ url_for('history') }}">{{ icons.clock() }}<span>History</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/settings') }}" href="{{ url_for('settings') }}">{{ icons.gear() }}<span>Settings</span></a>
+      </nav>
+      <div class="sidebar-footer">{{ icons.shield() }}<span>Runs 100% locally &mdash; your data never leaves this PC</span></div>
+    </aside>
+    <main class="main">
+      <div class="page">
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash">{% for m in messages %}<div>{{ m }}</div>{% endfor %}</div>
+          {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+</body>
+</html>

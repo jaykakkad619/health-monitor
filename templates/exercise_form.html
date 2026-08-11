@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if exercise else 'Add' }} Exercise - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Exercise library</p>
+      <h1>{{ 'Edit' if exercise else 'Add' }} Exercise</h1>
+    </div>
+  </div>
+  <div class="form-card">
+    <form method="post" class="form">
+      <label>Name
+        <input type="text" name="name" value="{{ exercise.name if exercise else '' }}" required autofocus placeholder="e.g. Running">
+      </label>
+      <label>Unit
+        <input type="text" name="unit" value="{{ exercise.unit if exercise else 'minute' }}" placeholder="e.g. minute, session, km">
+      </label>
+      <label>Calories burned per unit
+        <input type="number" step="0.1" min="0" name="calories_per_unit" value="{{ exercise.calories_per_unit if exercise else '' }}" required placeholder="0">
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn primary">Save Exercise</button>
+        <a class="btn" href="{{ url_for('exercises') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

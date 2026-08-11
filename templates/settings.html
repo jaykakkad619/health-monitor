@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Settings - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Preferences</p>
+      <h1>Settings</h1>
+    </div>
+  </div>
+  <div class="form-card">
+    <form method="post" class="form">
+      <label>Daily calorie goal (net, optional)
+        <input type="number" step="1" min="0" name="daily_calorie_goal" value="{{ goal or '' }}" placeholder="e.g. 2000">
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}
