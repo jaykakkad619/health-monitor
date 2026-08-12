@@ -1,5 +1,5 @@
 const DB_NAME = "health-monitor";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise = null;
 
@@ -25,6 +25,17 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains("weightLogs")) {
+        const s = db.createObjectStore("weightLogs", { keyPath: "id", autoIncrement: true });
+        s.createIndex("byDate", "date");
+      }
+      if (!db.objectStoreNames.contains("recipes")) {
+        db.createObjectStore("recipes", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("recipeIngredients")) {
+        const s = db.createObjectStore("recipeIngredients", { keyPath: "id", autoIncrement: true });
+        s.createIndex("byRecipe", "recipeId");
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -62,6 +73,10 @@ export const db = {
   async get(store, id) {
     const { [store]: s } = await tx(store, "readonly");
     return wrap(s.get(id));
+  },
+  async clear(store) {
+    const { [store]: s } = await tx(store, "readwrite");
+    return wrap(s.clear());
   },
   async add(store, value) {
     const { [store]: s } = await tx(store, "readwrite");

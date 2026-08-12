@@ -531,9 +531,10 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 .food-theme .log-card-head h2 .icon { color: var(--lime); }
 .exercise-theme .log-card-head h2 .icon { color: var(--cyan); }
 
-.quick-add { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; }
+.quick-add { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
 .quick-add select { flex: 1; min-width: 0; }
 .quick-add input[type="number"] { width: 62px; flex-shrink: 0; }
+.quick-add select.meal-select { flex: 0 0 auto; width: 108px; }
 
 .quick-add button {
   background: var(--lime);
@@ -561,6 +562,27 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 .log-item-name { font-weight: 600; font-size: 0.87rem; }
 .log-item-meta { font-size: 0.74rem; color: var(--muted); }
 .log-item-kcal { font-family: var(--font-mono); font-weight: 600; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+
+.meal-group { margin-bottom: 1rem; }
+.meal-group:last-child { margin-bottom: 0; }
+
+.meal-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+
+.meal-group-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.meal-group-kcal { font-family: var(--font-mono); font-size: 0.76rem; color: var(--muted-2); }
+.meal-empty { list-style: none; color: var(--muted-2); font-size: 0.78rem; font-style: italic; padding: 0.3rem 0.1rem; }
 .log-item form { display: flex; }
 .log-item .icon-btn { width: 30px; height: 30px; }
 
@@ -658,6 +680,36 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 
 .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.8rem; }
 .form-actions { display: flex; gap: 0.6rem; margin-top: 0.4rem; }
+
+.suggestion-box {
+  background: var(--lime-dim);
+  border: 1px solid var(--lime);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.1rem;
+}
+
+.suggestion-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.suggestion-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--lime);
+}
+
+.suggestion-macros { margin: 0; font-size: 0.78rem; color: var(--muted); }
 
 /* History */
 

@@ -41,6 +41,130 @@ function formatDisplayDate(iso) {
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 }
 
+const ACTIVITY_LEVELS = [
+  ["sedentary", "Sedentary (little/no exercise)", 1.2],
+  ["light", "Lightly active (1-3 days/week)", 1.375],
+  ["moderate", "Moderately active (3-5 days/week)", 1.55],
+  ["active", "Very active (6-7 days/week)", 1.725],
+  ["very_active", "Extremely active (hard exercise + physical job)", 1.9],
+];
+const GOAL_OPTIONS = [
+  ["lose", "Lose weight", -500],
+  ["maintain", "Maintain weight", 0],
+  ["gain", "Gain weight", 500],
+];
+const PROFILE_KEYS = ["profileAge", "profileSex", "profileHeightCm", "profileWeightKg", "profileActivity", "profileGoal"];
+
+function suggestedTargets(profile) {
+  const age = parseFloat(profile.profileAge);
+  const heightCm = parseFloat(profile.profileHeightCm);
+  const weightKg = parseFloat(profile.profileWeightKg);
+  const activity = ACTIVITY_LEVELS.find((a) => a[0] === profile.profileActivity);
+  const goal = GOAL_OPTIONS.find((g) => g[0] === profile.profileGoal);
+  if (!age || !heightCm || !weightKg || !activity || !goal || (profile.profileSex !== "male" && profile.profileSex !== "female")) {
+    return null;
+  }
+  let bmr = 10 * weightKg + 6.25 * heightCm - 5 * age;
+  bmr += profile.profileSex === "male" ? 5 : -161;
+  const tdee = bmr * activity[2];
+  const calories = Math.max(1200, tdee + goal[2]);
+  const proteinG = weightKg * 1.6;
+  const fatG = (calories * 0.25) / 9;
+  const carbsG = Math.max(0, (calories - proteinG * 4 - fatG * 9) / 4);
+  return { calories, proteinG, carbsG, fatG };
+}
+
+const MEALS = [
+  ["breakfast", "Breakfast"],
+  ["lunch", "Lunch"],
+  ["dinner", "Dinner"],
+  ["snack", "Snack"],
+  ["other", "Other"],
+];
+
+function toSnake(key) {
+  return key.replace(/([A-Z])/g, "_$1").toLowerCase();
+}
+
+function toCamel(key) {
+  return key.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+}
+
+function objToSnake(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) out[toSnake(k)] = v;
+  return out;
+}
+
+function objToCamel(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) out[toCamel(k)] = v;
+  return out;
+}
+
+const EXPORT_STORES = ["foods", "exercises", "foodLogs", "exerciseLogs", "weightLogs", "recipes", "recipeIngredients"];
+
+function toBackupShape(row) {
+  const snake = objToSnake(row);
+  if (snake.date !== undefined) {
+    snake.log_date = snake.date;
+    delete snake.date;
+  }
+  return snake;
+}
+
+function fromBackupShape(row) {
+  const camel = objToCamel(row);
+  if (camel.logDate !== undefined) {
+    camel.date = camel.logDate;
+    delete camel.logDate;
+  }
+  return camel;
+}
+
+async function exportData() {
+  const data = { version: 1, exported_at: new Date().toISOString() };
+  for (const store of EXPORT_STORES) {
+    const rows = await db.getAll(store);
+    data[toSnake(store)] = rows.map(toBackupShape);
+  }
+  const settingsRows = await db.getAll("settings");
+  data.settings = {};
+  for (const row of settingsRows) data.settings[toSnake(row.key)] = row.value;
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `health-monitor-backup-${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importData(data) {
+  for (const store of EXPORT_STORES) await db.clear(store);
+  await db.clear("settings");
+
+  for (const store of EXPORT_STORES) {
+    const rows = data[toSnake(store)] || [];
+    for (const row of rows) await db.put(store, fromBackupShape(row));
+  }
+  const settingsObj = data.settings || {};
+  for (const [snakeKey, value] of Object.entries(settingsObj)) {
+    await db.put("settings", { key: toCamel(snakeKey), value });
+  }
+}
+
+function guessMeal() {
+  const hour = new Date().getHours();
+  if (hour < 11) return "breakfast";
+  if (hour < 16) return "lunch";
+  if (hour < 21) return "dinner";
+  return "snack";
+}
+
 let toastTimer = null;
 function toast(msg) {
   const t = document.getElementById("toast");
@@ -66,6 +190,7 @@ async function dayTotals(dateStr) {
       if (!f) return null;
       const row = {
         id: l.id,
+        meal: l.meal || "other",
         name: f.name,
         servingUnit: f.servingUnit,
         servings: l.servings,
@@ -116,12 +241,29 @@ async function dayTotals(dateStr) {
     nutrients[n.key] = { ...n, total, pct };
   }
 
-  return { foodRows, exerciseRows, consumed, burned, net: consumed - burned, protein, carbs, fat, macroPct, nutrients, foods, exercises };
+  const meals = [];
+  for (const [key, label] of MEALS) {
+    const rows = foodRows.filter((r) => r.meal === key);
+    if (!rows.length && key === "other") continue;
+    meals.push({ key, label, rows, calories: rows.reduce((s, r) => s + r.calories, 0) });
+  }
+
+  return { foodRows, meals, exerciseRows, consumed, burned, net: consumed - burned, protein, carbs, fat, macroPct, nutrients, foods, exercises };
 }
 
 async function getGoal() {
   const row = await db.get("settings", "dailyCalorieGoal");
   return row ? parseFloat(row.value) : null;
+}
+
+async function getSetting(key) {
+  const row = await db.get("settings", key);
+  return row ? row.value : null;
+}
+
+async function getProfile() {
+  const entries = await Promise.all(PROFILE_KEYS.map(async (k) => [k, await getSetting(k)]));
+  return Object.fromEntries(entries);
 }
 
 function currentDashboardDate() {
@@ -211,27 +353,39 @@ async function renderDashboard() {
           ${totals.foods.map((f) => `<option value="${f.id}">${esc(f.name)} &middot; ${Math.round(f.calories)} kcal</option>`).join("")}
         </select>
         <input type="number" step="0.1" min="0" id="foodServings" placeholder="Qty" value="1" required>
+        <select id="foodMeal" class="meal-select">
+          ${MEALS.map(([key, label]) => `<option value="${key}" ${key === guessMeal() ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
         <button type="submit">${icons.plus}</button>
       </form>
-      ${
-        !totals.foods.length
-          ? `<p class="empty">No foods yet. <a href="#/foods/new">Add one</a>.</p>`
-          : !totals.foodRows.length
-          ? `<p class="empty">Nothing logged yet today.</p>`
-          : ""
-      }
-      <ul class="log-list">
-        ${totals.foodRows
-          .map(
-            (row, i) => `
-        <li class="log-item" style="animation-delay:${i * 40}ms">
-          <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.servings} &times; ${esc(row.servingUnit)}</span></div>
-          <span class="log-item-kcal">${Math.round(row.calories)}</span>
-          <button class="icon-btn danger" data-delete-food-log="${row.id}">${icons.trash}</button>
-        </li>`
-          )
-          .join("")}
-      </ul>
+      ${!totals.foods.length ? `<p class="empty">No foods yet. <a href="#/foods/new">Add one</a>.</p>` : ""}
+      ${totals.meals
+        .map(
+          (group) => `
+        <div class="meal-group">
+          <div class="meal-group-head">
+            <span class="meal-group-label">${group.label}</span>
+            <span class="meal-group-kcal">${Math.round(group.calories)} kcal</span>
+          </div>
+          <ul class="log-list">
+            ${
+              group.rows.length
+                ? group.rows
+                    .map(
+                      (row, i) => `
+            <li class="log-item" style="animation-delay:${i * 40}ms">
+              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.servings} &times; ${esc(row.servingUnit)}</span></div>
+              <span class="log-item-kcal">${Math.round(row.calories)}</span>
+              <button class="icon-btn danger" data-delete-food-log="${row.id}">${icons.trash}</button>
+            </li>`
+                    )
+                    .join("")
+                : `<li class="meal-empty">Nothing logged</li>`
+            }
+          </ul>
+        </div>`
+        )
+        .join("")}
     </section>
 
     <section class="card log-card exercise-theme">
@@ -304,8 +458,9 @@ async function renderDashboard() {
     e.preventDefault();
     const foodId = Number(document.getElementById("foodSelect").value);
     const servings = parseFloat(document.getElementById("foodServings").value);
+    const meal = document.getElementById("foodMeal").value;
     if (!foodId || !servings) return;
-    await db.add("foodLogs", { date: dateStr, foodId, servings });
+    await db.add("foodLogs", { date: dateStr, foodId, servings, meal });
     toast("Food logged");
     renderDashboard();
   });
@@ -562,22 +717,117 @@ async function renderHistory() {
 
 async function renderSettings() {
   const goal = await getGoal();
+  const profile = await getProfile();
+  const suggestion = suggestedTargets(profile);
+
   view.innerHTML = `
     <div class="page-head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div></div>
+
     <div class="card form-card">
+      <h2>Your Profile &amp; Targets</h2>
       <form id="settingsForm" class="form">
-        <label>Daily calorie goal (net, optional)<input type="number" step="1" min="0" id="goalInput" value="${goal ?? ""}" placeholder="e.g. 2000"></label>
+        <div class="form-row-3">
+          <label>Age<input type="number" step="1" min="0" id="pAge" value="${profile.profileAge || ""}" placeholder="e.g. 30"></label>
+          <label>Sex
+            <select id="pSex">
+              <option value="" ${!profile.profileSex ? "selected" : ""}>&mdash;</option>
+              <option value="male" ${profile.profileSex === "male" ? "selected" : ""}>Male</option>
+              <option value="female" ${profile.profileSex === "female" ? "selected" : ""}>Female</option>
+            </select>
+          </label>
+          <label>Height (cm)<input type="number" step="0.1" min="0" id="pHeight" value="${profile.profileHeightCm || ""}" placeholder="e.g. 170"></label>
+        </div>
+        <div class="form-row-3">
+          <label>Weight (kg)<input type="number" step="0.1" min="0" id="pWeight" value="${profile.profileWeightKg || ""}" placeholder="e.g. 70"></label>
+          <label>Activity level
+            <select id="pActivity">
+              <option value="" ${!profile.profileActivity ? "selected" : ""}>&mdash;</option>
+              ${ACTIVITY_LEVELS.map(([k, label]) => `<option value="${k}" ${profile.profileActivity === k ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+          <label>Goal
+            <select id="pGoal">
+              <option value="" ${!profile.profileGoal ? "selected" : ""}>&mdash;</option>
+              ${GOAL_OPTIONS.map(([k, label]) => `<option value="${k}" ${profile.profileGoal === k ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+
+        ${
+          suggestion
+            ? `<div class="suggestion-box">
+                <p class="suggestion-title">Based on your profile</p>
+                <p class="suggestion-line">
+                  <strong>${Math.round(suggestion.calories)} kcal/day</strong>
+                  <button type="button" class="btn" id="useSuggestedCalories" data-value="${Math.round(suggestion.calories)}">Use this</button>
+                </p>
+                <p class="suggestion-macros">Suggested macros &middot; Protein ${Math.round(suggestion.proteinG)}g &middot; Carbs ${Math.round(suggestion.carbsG)}g &middot; Fat ${Math.round(suggestion.fatG)}g</p>
+              </div>`
+            : `<p class="empty">Fill in all profile fields above to get a personalized calorie/macro suggestion (Mifflin-St Jeor formula).</p>`
+        }
+
+        <label>Daily calorie goal (net)<input type="number" step="1" min="0" id="goalInput" value="${goal ?? ""}" placeholder="e.g. 2000"></label>
         <div class="form-actions"><button type="submit" class="btn primary">Save</button></div>
       </form>
-      <p class="empty" style="margin-top:1rem">All data lives only on this device, in this browser. Uninstalling the app or clearing site data will erase it.</p>
+    </div>
+
+    <div class="card">
+      <h2>Backup &amp; Restore</h2>
+      <p class="empty">Export everything as a file. The same file can be restored here later, or imported into the PC app.</p>
+      <div class="form-actions"><button type="button" class="btn primary" id="exportBtn">Export data</button></div>
+      <form id="importForm" class="form" style="margin-top:1rem">
+        <label>Restore from backup file<input type="file" id="importFile" accept="application/json" required></label>
+        <div class="form-actions"><button type="submit" class="btn">Import &amp; replace data</button></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>About this data</h2>
+      <p class="empty">Nutrient %DV figures use generic FDA adult reference values &mdash; they are not personalized medical or dietary advice. Consult a healthcare provider or registered dietitian for guidance specific to you.</p>
+      <p class="empty">All data lives only on this device, in this browser. Uninstalling the app or clearing site data will erase it.</p>
     </div>
   `;
+
+  document.getElementById("useSuggestedCalories")?.addEventListener("click", (e) => {
+    document.getElementById("goalInput").value = e.target.dataset.value;
+  });
+
   document.getElementById("settingsForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = document.getElementById("goalInput").value.trim();
     if (val) await db.put("settings", { key: "dailyCalorieGoal", value: val });
     else await db.remove("settings", "dailyCalorieGoal");
+
+    const fields = {
+      profileAge: document.getElementById("pAge").value,
+      profileSex: document.getElementById("pSex").value,
+      profileHeightCm: document.getElementById("pHeight").value,
+      profileWeightKg: document.getElementById("pWeight").value,
+      profileActivity: document.getElementById("pActivity").value,
+      profileGoal: document.getElementById("pGoal").value,
+    };
+    for (const [key, value] of Object.entries(fields)) {
+      if (value) await db.put("settings", { key, value: String(value) });
+      else await db.remove("settings", key);
+    }
     toast("Settings saved");
+    renderSettings();
+  });
+
+  document.getElementById("exportBtn").addEventListener("click", exportData);
+  document.getElementById("importForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = document.getElementById("importFile").files[0];
+    if (!file) return;
+    if (!confirm("This replaces ALL current data with the backup file. Continue?")) return;
+    try {
+      const text = await file.text();
+      await importData(JSON.parse(text));
+      toast("Data restored from backup");
+      renderSettings();
+    } catch (err) {
+      alert("That backup file couldn't be imported — it may be corrupted or in the wrong format.");
+    }
   });
 }
 

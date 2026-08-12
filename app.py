@@ -1,7 +1,9 @@
-from datetime import date, timedelta
+import io
+import json
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import Blueprint, Flask, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Flask, flash, redirect, render_template, request, send_file, url_for
 
 import db
 from nutrients import NUTRIENT_KEYS, NUTRIENTS
@@ -37,13 +39,34 @@ def set_setting(key, value):
     conn.commit()
 
 
+MEALS = [
+    ("breakfast", "Breakfast"),
+    ("lunch", "Lunch"),
+    ("dinner", "Dinner"),
+    ("snack", "Snack"),
+    ("other", "Other"),
+]
+MEAL_LABELS = dict(MEALS)
+
+
+def guess_meal():
+    hour = datetime.now().hour
+    if hour < 11:
+        return "breakfast"
+    if hour < 16:
+        return "lunch"
+    if hour < 21:
+        return "dinner"
+    return "snack"
+
+
 def day_totals(log_date):
     conn = db.get_db()
 
     nutrient_select = ",\n               ".join(f"f.{k} * fl.servings AS {k}" for k in NUTRIENT_KEYS)
     food_rows = conn.execute(
         f"""
-        SELECT fl.id, f.name, f.serving_unit, fl.servings,
+        SELECT fl.id, fl.meal, f.name, f.serving_unit, fl.servings,
                f.calories * fl.servings AS calories,
                f.protein_g * fl.servings AS protein_g,
                f.carbs_g * fl.servings AS carbs_g,
@@ -87,8 +110,16 @@ def day_totals(log_date):
         pct = min(total / n["dv"] * 100, 999) if n["dv"] else None
         nutrients[n["key"]] = {"total": total, "pct": pct, **n}
 
+    meals = []
+    for key, label in MEALS:
+        rows = [r for r in food_rows if r["meal"] == key]
+        if not rows and key == "other":
+            continue
+        meals.append({"key": key, "label": label, "rows": rows, "calories": sum(r["calories"] for r in rows)})
+
     return {
         "food_rows": food_rows,
+        "meals": meals,
         "exercise_rows": exercise_rows,
         "consumed": consumed,
         "burned": burned,
@@ -136,6 +167,8 @@ def dashboard():
         remaining=remaining,
         foods=foods,
         exercises=exercises,
+        meals=MEALS,
+        guessed_meal=guess_meal(),
     )
 
 
@@ -144,10 +177,11 @@ def log_food():
     log_date = request.form["log_date"]
     food_id = request.form["food_id"]
     servings = request.form["servings"]
+    meal = request.form.get("meal") or "other"
     conn = db.get_db()
     conn.execute(
-        "INSERT INTO food_logs (log_date, food_id, servings) VALUES (?, ?, ?)",
-        (log_date, food_id, servings),
+        "INSERT INTO food_logs (log_date, food_id, servings, meal) VALUES (?, ?, ?, ?)",
+        (log_date, food_id, servings, meal),
     )
     conn.commit()
     flash("Food logged.")
@@ -196,7 +230,7 @@ def foods():
 def _food_form_values():
     values = [
         request.form["name"],
-        request.form["serving_unit"] or "serving",
+        request.form.get("serving_unit") or "serving",
         request.form["calories"],
         request.form.get("protein_g") or 0,
         request.form.get("carbs_g") or 0,
@@ -329,6 +363,54 @@ def history():
     return render_template("history.html", rows=rows)
 
 
+ACTIVITY_LEVELS = [
+    ("sedentary", "Sedentary (little/no exercise)", 1.2),
+    ("light", "Lightly active (1-3 days/week)", 1.375),
+    ("moderate", "Moderately active (3-5 days/week)", 1.55),
+    ("active", "Very active (6-7 days/week)", 1.725),
+    ("very_active", "Extremely active (hard exercise + physical job)", 1.9),
+]
+ACTIVITY_MULTIPLIERS = {k: m for k, _, m in ACTIVITY_LEVELS}
+GOAL_ADJUSTMENTS = [
+    ("lose", "Lose weight", -500),
+    ("maintain", "Maintain weight", 0),
+    ("gain", "Gain weight", 500),
+]
+GOAL_ADJUSTMENT_MAP = {k: adj for k, _, adj in GOAL_ADJUSTMENTS}
+
+PROFILE_KEYS = ["profile_age", "profile_sex", "profile_height_cm", "profile_weight_kg", "profile_activity", "profile_goal"]
+
+
+def get_profile():
+    return {k: get_setting(k) for k in PROFILE_KEYS}
+
+
+def suggested_targets(profile):
+    """Mifflin-St Jeor BMR -> TDEE -> calorie/macro suggestion. None if profile incomplete."""
+    try:
+        age = float(profile["profile_age"])
+        height_cm = float(profile["profile_height_cm"])
+        weight_kg = float(profile["profile_weight_kg"])
+        sex = profile["profile_sex"]
+        activity = profile["profile_activity"]
+        goal = profile["profile_goal"]
+        if sex not in ("male", "female") or activity not in ACTIVITY_MULTIPLIERS or goal not in GOAL_ADJUSTMENT_MAP:
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age
+    bmr += 5 if sex == "male" else -161
+    tdee = bmr * ACTIVITY_MULTIPLIERS[activity]
+    calories = max(1200, tdee + GOAL_ADJUSTMENT_MAP[goal])
+
+    protein_g = weight_kg * 1.6
+    fat_g = calories * 0.25 / 9
+    carbs_g = max(0, (calories - protein_g * 4 - fat_g * 9) / 4)
+
+    return {"calories": calories, "protein_g": protein_g, "carbs_g": carbs_g, "fat_g": fat_g}
+
+
 @app.route("/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "POST":
@@ -339,10 +421,94 @@ def settings():
             conn = db.get_db()
             conn.execute("DELETE FROM settings WHERE key = 'daily_calorie_goal'")
             conn.commit()
+
+        for key in PROFILE_KEYS:
+            value = request.form.get(key, "").strip()
+            if value:
+                set_setting(key, value)
+            else:
+                conn = db.get_db()
+                conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+                conn.commit()
+
         flash("Settings saved.")
         return redirect(url_for("settings"))
+
     goal = get_setting("daily_calorie_goal")
-    return render_template("settings.html", goal=goal)
+    profile = get_profile()
+    return render_template(
+        "settings.html",
+        goal=goal,
+        profile=profile,
+        suggestion=suggested_targets(profile),
+        activity_levels=ACTIVITY_LEVELS,
+        goal_options=GOAL_ADJUSTMENTS,
+    )
+
+
+EXPORT_TABLES = {
+    "foods": ["id", "name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS,
+    "exercises": ["id", "name", "unit", "calories_per_unit"],
+    "food_logs": ["id", "log_date", "food_id", "servings", "meal"],
+    "exercise_logs": ["id", "log_date", "exercise_id", "quantity"],
+    "weight_logs": ["id", "log_date", "weight_kg"],
+    "recipes": ["id", "food_id", "name", "yields_servings"],
+    "recipe_ingredients": ["id", "recipe_id", "food_id", "servings"],
+}
+
+
+@app.route("/settings/export")
+def export_data():
+    conn = db.get_db()
+    data = {"version": 1, "exported_at": datetime.now().isoformat()}
+    for table, cols in EXPORT_TABLES.items():
+        rows = conn.execute(f"SELECT {', '.join(cols)} FROM {table}").fetchall()
+        data[table] = [dict(r) for r in rows]
+    settings_rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    data["settings"] = {r["key"]: r["value"] for r in settings_rows}
+
+    buf = io.BytesIO(json.dumps(data, indent=2).encode("utf-8"))
+    return send_file(
+        buf,
+        mimetype="application/json",
+        as_attachment=True,
+        download_name=f"health-monitor-backup-{date.today().isoformat()}.json",
+    )
+
+
+@app.route("/settings/import", methods=["POST"])
+def import_data():
+    file = request.files.get("backup_file")
+    if not file or not file.filename:
+        flash("No file selected.")
+        return redirect(url_for("settings"))
+
+    conn = db.get_db()
+    try:
+        data = json.load(file.stream)
+        conn.execute("DELETE FROM recipe_ingredients")
+        conn.execute("DELETE FROM recipes")
+        conn.execute("DELETE FROM food_logs")
+        conn.execute("DELETE FROM exercise_logs")
+        conn.execute("DELETE FROM weight_logs")
+        conn.execute("DELETE FROM foods")
+        conn.execute("DELETE FROM exercises")
+        conn.execute("DELETE FROM settings")
+
+        for table, cols in EXPORT_TABLES.items():
+            placeholders = ", ".join("?" for _ in cols)
+            for row in data.get(table) or []:
+                conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})", [row.get(c) for c in cols])
+
+        for key, value in (data.get("settings") or {}).items():
+            conn.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+        conn.commit()
+        flash("Data restored from backup.")
+    except Exception:
+        conn.rollback()
+        flash("That backup file couldn't be imported — it may be corrupted or in the wrong format.")
+    return redirect(url_for("settings"))
 
 
 def lan_ip():

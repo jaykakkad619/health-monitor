@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS food_logs (
     log_date TEXT NOT NULL,
     food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
     servings REAL NOT NULL,
+    meal TEXT NOT NULL DEFAULT 'other',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -56,5 +57,28 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS weight_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    log_date TEXT NOT NULL,
+    weight_kg REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS recipes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    yields_servings REAL NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS recipe_ingredients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
+    servings REAL NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_food_logs_date ON food_logs(log_date);
 CREATE INDEX IF NOT EXISTS idx_exercise_logs_date ON exercise_logs(log_date);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_date ON weight_logs(log_date);
+CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);

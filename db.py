@@ -34,11 +34,16 @@ def init_db():
 
 
 def _migrate(conn):
-    """Add any nutrient columns missing from an older foods table."""
+    """Add any columns missing from an older schema version."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(foods)")}
     for key in NUTRIENT_KEYS:
         if key not in existing:
             conn.execute(f"ALTER TABLE foods ADD COLUMN {key} REAL NOT NULL DEFAULT 0")
+
+    food_log_cols = {row[1] for row in conn.execute("PRAGMA table_info(food_logs)")}
+    if "meal" not in food_log_cols:
+        conn.execute("ALTER TABLE food_logs ADD COLUMN meal TEXT NOT NULL DEFAULT 'other'")
+
     conn.commit()
 
 

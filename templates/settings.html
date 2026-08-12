@@ -7,14 +7,102 @@
       <h1>Settings</h1>
     </div>
   </div>
-  <div class="form-card">
+
+  <div class="card form-card">
+    <h2>Your Profile &amp; Targets</h2>
     <form method="post" class="form">
-      <label>Daily calorie goal (net, optional)
-        <input type="number" step="1" min="0" name="daily_calorie_goal" value="{{ goal or '' }}" placeholder="e.g. 2000">
+      <div class="form-row-3">
+        <label>Age
+          <input type="number" step="1" min="0" name="profile_age" value="{{ profile.profile_age or '' }}" placeholder="e.g. 30">
+        </label>
+        <label>Sex
+          <select name="profile_sex">
+            <option value="" {{ 'selected' if not profile.profile_sex }}>&mdash;</option>
+            <option value="male" {{ 'selected' if profile.profile_sex == 'male' }}>Male</option>
+            <option value="female" {{ 'selected' if profile.profile_sex == 'female' }}>Female</option>
+          </select>
+        </label>
+        <label>Height (cm)
+          <input type="number" step="0.1" min="0" name="profile_height_cm" value="{{ profile.profile_height_cm or '' }}" placeholder="e.g. 170">
+        </label>
+      </div>
+      <div class="form-row-3">
+        <label>Weight (kg)
+          <input type="number" step="0.1" min="0" name="profile_weight_kg" value="{{ profile.profile_weight_kg or '' }}" placeholder="e.g. 70">
+        </label>
+        <label>Activity level
+          <select name="profile_activity">
+            <option value="" {{ 'selected' if not profile.profile_activity }}>&mdash;</option>
+            {% for key, label, _ in activity_levels %}
+              <option value="{{ key }}" {{ 'selected' if profile.profile_activity == key }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Goal
+          <select name="profile_goal">
+            <option value="" {{ 'selected' if not profile.profile_goal }}>&mdash;</option>
+            {% for key, label, _ in goal_options %}
+              <option value="{{ key }}" {{ 'selected' if profile.profile_goal == key }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      {% if suggestion %}
+      <div class="suggestion-box">
+        <p class="suggestion-title">Based on your profile</p>
+        <p class="suggestion-line">
+          <strong>{{ "%.0f"|format(suggestion.calories) }} kcal/day</strong>
+          <button type="button" class="btn" id="useSuggestedCalories" data-value="{{ "%.0f"|format(suggestion.calories) }}">Use this</button>
+        </p>
+        <p class="suggestion-macros">
+          Suggested macros &middot; Protein {{ "%.0f"|format(suggestion.protein_g) }}g &middot;
+          Carbs {{ "%.0f"|format(suggestion.carbs_g) }}g &middot;
+          Fat {{ "%.0f"|format(suggestion.fat_g) }}g
+        </p>
+      </div>
+      {% else %}
+      <p class="empty">Fill in all profile fields above to get a personalized calorie/macro suggestion (using the Mifflin-St Jeor formula).</p>
+      {% endif %}
+
+      <label>Daily calorie goal (net)
+        <input type="number" step="1" min="0" name="daily_calorie_goal" id="dailyCalorieGoal" value="{{ goal or '' }}" placeholder="e.g. 2000">
       </label>
+
       <div class="form-actions">
         <button type="submit" class="btn primary">Save</button>
       </div>
     </form>
   </div>
+
+  <div class="card">
+    <h2>Backup &amp; Restore</h2>
+    <p class="empty">Export everything &mdash; foods, exercises, logs, recipes, settings &mdash; as a single file. The same file can be restored here later, or imported into the phone app.</p>
+    <div class="form-actions">
+      <a class="btn primary" href="{{ url_for('export_data') }}">Export data</a>
+    </div>
+    <form method="post" action="{{ url_for('import_data') }}" enctype="multipart/form-data" class="form" style="margin-top:1rem">
+      <label>Restore from backup file
+        <input type="file" name="backup_file" accept="application/json" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn" onclick="return confirm('This replaces ALL current data with the backup file. Continue?');">Import &amp; replace data</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>About this data</h2>
+    <p class="empty">
+      Nutrient %DV figures use generic FDA adult reference values &mdash; they are not personalized medical or dietary advice.
+      Consult a healthcare provider or registered dietitian for guidance specific to you.
+    </p>
+    <p class="empty">All data is stored only on this PC, in this app's local database. Nothing is sent anywhere.</p>
+  </div>
+
+  <script>
+    document.getElementById('useSuggestedCalories')?.addEventListener('click', function () {
+      document.getElementById('dailyCalorieGoal').value = this.dataset.value;
+    });
+  </script>
 {% endblock %}

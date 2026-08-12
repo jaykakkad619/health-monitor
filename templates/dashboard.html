@@ -90,28 +90,41 @@
           {% endfor %}
         </select>
         <input type="number" step="0.1" min="0" name="servings" placeholder="Qty" value="1" required>
+        <select name="meal" class="meal-select">
+          {% for key, label in meals %}
+            <option value="{{ key }}" {{ 'selected' if key == guessed_meal else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select>
         <button type="submit">{{ icons.plus() }}</button>
       </form>
       {% if not foods %}
         <p class="empty">No foods yet. <a href="{{ url_for('new_food') }}">Add one</a>.</p>
-      {% elif not totals.food_rows %}
-        <p class="empty">Nothing logged yet today.</p>
       {% endif %}
-      <ul class="log-list">
-        {% for row in totals.food_rows %}
-        <li class="log-item" style="animation-delay: {{ loop.index0 * 40 }}ms">
-          <div class="log-item-main">
-            <span class="log-item-name">{{ row.name }}</span>
-            <span class="log-item-meta">{{ row.servings }} &times; {{ row.serving_unit }}</span>
+      {% for group in totals.meals %}
+        <div class="meal-group">
+          <div class="meal-group-head">
+            <span class="meal-group-label">{{ group.label }}</span>
+            <span class="meal-group-kcal">{{ "%.0f"|format(group.calories) }} kcal</span>
           </div>
-          <span class="log-item-kcal">{{ "%.0f"|format(row.calories) }}</span>
-          <form method="post" action="{{ url_for('delete_food_log', log_id=row.id) }}">
-            <input type="hidden" name="log_date" value="{{ log_date }}">
-            <button class="icon-btn danger" type="submit">{{ icons.trash() }}</button>
-          </form>
-        </li>
-        {% endfor %}
-      </ul>
+          <ul class="log-list">
+            {% for row in group.rows %}
+            <li class="log-item" style="animation-delay: {{ loop.index0 * 40 }}ms">
+              <div class="log-item-main">
+                <span class="log-item-name">{{ row.name }}</span>
+                <span class="log-item-meta">{{ row.servings }} &times; {{ row.serving_unit }}</span>
+              </div>
+              <span class="log-item-kcal">{{ "%.0f"|format(row.calories) }}</span>
+              <form method="post" action="{{ url_for('delete_food_log', log_id=row.id) }}">
+                <input type="hidden" name="log_date" value="{{ log_date }}">
+                <button class="icon-btn danger" type="submit">{{ icons.trash() }}</button>
+              </form>
+            </li>
+            {% else %}
+            <li class="meal-empty">Nothing logged</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
     </section>
 
     <section class="log-card exercise-theme">
