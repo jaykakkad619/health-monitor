@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}Search Foods - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Food library</p>
+      <h1>Search Online</h1>
+    </div>
+    <a class="btn" href="{{ url_for('foods') }}">Back to Foods</a>
+  </div>
+
+  <form method="get" class="search-bar">
+    <input type="text" name="q" value="{{ query }}" placeholder="e.g. oats, greek yogurt, protein bar" autofocus>
+    <button type="submit" class="btn primary">Search</button>
+  </form>
+  <p class="empty">Searches a free public packaged-food database (Open Food Facts) &mdash; best for branded/packaged items, not home-cooked dishes. Requires internet; results vary in completeness.</p>
+
+  {% if error %}
+    <p class="empty">{{ error }}</p>
+  {% elif query and not results %}
+    <p class="empty">No results for &ldquo;{{ query }}&rdquo;.</p>
+  {% endif %}
+
+  {% if results %}
+  <div class="item-grid">
+    {% for r in results %}
+    <div class="item-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
+      <div class="item-card-top">
+        <div>
+          <div class="item-name">{{ r.name }}</div>
+          <div class="item-sub">{{ r.brand }}{{ ' · ' if r.brand }}per {{ r.serving_unit }}</div>
+        </div>
+        <div class="item-kcal food">{{ "%.0f"|format(r.calories) }}<span>kcal</span></div>
+      </div>
+      <div class="item-macros">
+        <span><i class="dot protein"></i>{{ "%.1f"|format(r.protein_g) }}g</span>
+        <span><i class="dot carbs"></i>{{ "%.1f"|format(r.carbs_g) }}g</span>
+        <span><i class="dot fat"></i>{{ "%.1f"|format(r.fat_g) }}g</span>
+      </div>
+      <form method="post" action="{{ url_for('add_searched_food') }}">
+        <input type="hidden" name="food_json" value='{{ r|tojson }}'>
+        <button type="submit" class="btn primary" style="width:100%">{{ icons.plus() }} Add to my foods</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endblock %}

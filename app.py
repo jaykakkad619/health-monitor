@@ -677,6 +677,132 @@ def delete_recipe(recipe_id):
     return redirect(url_for("recipes"))
 
 
+# Open Food Facts integration. Their API reports every mass-based nutrient
+# in grams regardless of scale (confirmed empirically) -- multiplier below
+# converts that into whichever unit our own schema uses for that field.
+OFF_FIELD_MAP = [
+    ("protein_g", "proteins", 1),
+    ("carbs_g", "carbohydrates", 1),
+    ("fat_g", "fat", 1),
+    ("fiber_g", "fiber", 1),
+    ("sugar_g", "sugars", 1),
+    ("sat_fat_g", "saturated-fat", 1),
+    ("cholesterol_mg", "cholesterol", 1000),
+    ("sodium_mg", "sodium", 1000),
+    ("potassium_mg", "potassium", 1000),
+    ("calcium_mg", "calcium", 1000),
+    ("iron_mg", "iron", 1000),
+    ("magnesium_mg", "magnesium", 1000),
+    ("zinc_mg", "zinc", 1000),
+    ("vitamin_a_mcg", "vitamin-a", 1_000_000),
+    ("vitamin_c_mg", "vitamin-c", 1000),
+    ("vitamin_d_mcg", "vitamin-d", 1_000_000),
+    ("vitamin_e_mg", "vitamin-e", 1000),
+    ("vitamin_k_mcg", "vitamin-k", 1_000_000),
+    ("vitamin_b6_mg", "vitamin-b6", 1000),
+    ("vitamin_b12_mcg", "vitamin-b12", 1_000_000),
+    ("folate_mcg", "folates", 1_000_000),
+]
+OFF_USER_AGENT = "HealthMonitorApp-Personal/1.0"
+
+
+def _off_request(url):
+    import urllib.request
+
+    # Accept header matters: OFF's bot-protection rejects requests without one,
+    # and urllib (unlike curl/browsers) doesn't send one by default.
+    req = urllib.request.Request(url, headers={"User-Agent": OFF_USER_AGENT, "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.load(resp)
+
+
+def off_product_to_food(p):
+    n = p.get("nutriments", {})
+    has_serving = n.get("energy-kcal_serving") is not None
+    suffix = "_serving" if has_serving else "_100g"
+    serving_unit = (p.get("serving_size") or "1 serving").strip() if has_serving else "100g"
+
+    def raw(off_key):
+        v = n.get(f"{off_key}{suffix}")
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    food = {
+        "name": (p.get("product_name") or p.get("generic_name") or "Unnamed product").strip(),
+        "brand": (p.get("brands") or "").strip(),
+        "serving_unit": serving_unit,
+        "calories": raw("energy-kcal"),
+    }
+    for our_key, off_key, mult in OFF_FIELD_MAP:
+        food[our_key] = raw(off_key) * mult
+    return food
+
+
+def off_search(query, page_size=15):
+    import urllib.parse
+
+    params = urllib.parse.urlencode({"search_terms": query, "page_size": page_size})
+    data = _off_request(f"https://world.openfoodfacts.org/api/v2/search?{params}")
+    return [off_product_to_food(p) for p in data.get("products", []) if p.get("product_name")]
+
+
+def off_lookup_barcode(barcode):
+    data = _off_request(f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json")
+    if data.get("status") != 1:
+        return None
+    return off_product_to_food(data["product"])
+
+
+@app.route("/foods/search")
+def search_foods():
+    query = request.args.get("q", "").strip()
+    results, error = [], None
+    if query:
+        try:
+            results = off_search(query)
+        except Exception:
+            error = "Couldn't reach the online food database. Check your internet connection and try again."
+    return render_template("food_search.html", query=query, results=results, error=error)
+
+
+@app.route("/foods/search/add", methods=["POST"])
+def add_searched_food():
+    payload = json.loads(request.form["food_json"])
+    cols = ["name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+    values = [
+        payload.get("name") or "Unnamed product",
+        payload.get("serving_unit") or "100g",
+        payload.get("calories") or 0,
+        payload.get("protein_g") or 0,
+        payload.get("carbs_g") or 0,
+        payload.get("fat_g") or 0,
+    ]
+    values += [payload.get(k) or 0 for k in NUTRIENT_KEYS]
+    placeholders = ", ".join("?" for _ in cols)
+    conn = db.get_db()
+    conn.execute(f"INSERT INTO foods ({', '.join(cols)}) VALUES ({placeholders})", values)
+    conn.commit()
+    flash(f'Added "{payload.get("name")}" to your foods.')
+    return redirect(url_for("foods"))
+
+
+@app.route("/foods/scan", methods=["GET", "POST"])
+def scan_barcode():
+    barcode, product, error = None, None, None
+    if request.method == "POST":
+        barcode = request.form.get("barcode", "").strip()
+        if barcode:
+            try:
+                product = off_lookup_barcode(barcode)
+                if not product:
+                    error = f'No product found for barcode "{barcode}".'
+            except Exception:
+                error = "Couldn't reach the online food database. Check your internet connection and try again."
+    return render_template("food_scan.html", barcode=barcode, product=product, error=error)
+
+
 def lan_ip():
     import socket
 

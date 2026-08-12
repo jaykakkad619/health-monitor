@@ -198,6 +198,11 @@ a { color: inherit; }
   margin-bottom: 2rem;
 }
 
+.page-head-actions { display: flex; gap: 0.6rem; }
+
+.search-bar { display: flex; gap: 0.6rem; margin-bottom: 1rem; }
+.search-bar input { flex: 1; }
+
 .eyebrow {
   font-family: var(--font-display);
   text-transform: uppercase;

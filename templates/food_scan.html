@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}Scan Barcode - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Food library</p>
+      <h1>Look Up Barcode</h1>
+    </div>
+    <a class="btn" href="{{ url_for('foods') }}">Back to Foods</a>
+  </div>
+
+  <p class="empty">No camera needed here &mdash; type the barcode number printed under the barcode lines on the package. (On your phone app, this same feature scans it with your camera instead.)</p>
+
+  <form method="post" class="search-bar">
+    <input type="text" inputmode="numeric" name="barcode" value="{{ barcode or '' }}" placeholder="e.g. 3017620422003" autofocus>
+    <button type="submit" class="btn primary">Look up</button>
+  </form>
+
+  {% if error %}
+    <p class="empty">{{ error }}</p>
+  {% endif %}
+
+  {% if product %}
+  <div class="item-grid">
+    <div class="item-card">
+      <div class="item-card-top">
+        <div>
+          <div class="item-name">{{ product.name }}</div>
+          <div class="item-sub">{{ product.brand }}{{ ' · ' if product.brand }}per {{ product.serving_unit }}</div>
+        </div>
+        <div class="item-kcal food">{{ "%.0f"|format(product.calories) }}<span>kcal</span></div>
+      </div>
+      <div class="item-macros">
+        <span><i class="dot protein"></i>{{ "%.1f"|format(product.protein_g) }}g</span>
+        <span><i class="dot carbs"></i>{{ "%.1f"|format(product.carbs_g) }}g</span>
+        <span><i class="dot fat"></i>{{ "%.1f"|format(product.fat_g) }}g</span>
+      </div>
+      <form method="post" action="{{ url_for('add_searched_food') }}">
+        <input type="hidden" name="food_json" value='{{ product|tojson }}'>
+        <button type="submit" class="btn primary" style="width:100%">{{ icons.plus() }} Add to my foods</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+{% endblock %}

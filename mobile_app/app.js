@@ -7,6 +7,69 @@ const view = document.getElementById("view");
 const pageTitle = document.getElementById("pageTitle");
 const tabs = document.querySelectorAll(".tab");
 
+// Open Food Facts integration. Their API reports every mass-based nutrient
+// in grams regardless of scale (confirmed empirically) -- multiplier below
+// converts that into whichever unit our own schema uses for that field.
+const OFF_FIELD_MAP = [
+  ["proteinG", "proteins", 1],
+  ["carbsG", "carbohydrates", 1],
+  ["fatG", "fat", 1],
+  ["fiberG", "fiber", 1],
+  ["sugarG", "sugars", 1],
+  ["satFatG", "saturated-fat", 1],
+  ["cholesterolMg", "cholesterol", 1000],
+  ["sodiumMg", "sodium", 1000],
+  ["potassiumMg", "potassium", 1000],
+  ["calciumMg", "calcium", 1000],
+  ["ironMg", "iron", 1000],
+  ["magnesiumMg", "magnesium", 1000],
+  ["zincMg", "zinc", 1000],
+  ["vitaminAMcg", "vitamin-a", 1000000],
+  ["vitaminCMg", "vitamin-c", 1000],
+  ["vitaminDMcg", "vitamin-d", 1000000],
+  ["vitaminEMg", "vitamin-e", 1000],
+  ["vitaminKMcg", "vitamin-k", 1000000],
+  ["vitaminB6Mg", "vitamin-b6", 1000],
+  ["vitaminB12Mcg", "vitamin-b12", 1000000],
+  ["folateMcg", "folates", 1000000],
+];
+
+function offProductToFood(p) {
+  const n = p.nutriments || {};
+  const hasServing = n["energy-kcal_serving"] !== undefined;
+  const suffix = hasServing ? "_serving" : "_100g";
+  const servingUnit = hasServing ? String(p.serving_size || "1 serving").trim() : "100g";
+  const raw = (offKey) => {
+    const v = n[offKey + suffix];
+    const num = typeof v === "number" ? v : parseFloat(v);
+    return Number.isFinite(num) ? num : 0;
+  };
+  const food = {
+    name: String(p.product_name || p.generic_name || "Unnamed product").trim(),
+    brand: String(p.brands || "").trim(),
+    servingUnit,
+    calories: raw("energy-kcal"),
+  };
+  for (const [ourKey, offKey, mult] of OFF_FIELD_MAP) food[ourKey] = raw(offKey) * mult;
+  return food;
+}
+
+async function offSearch(query, pageSize = 15) {
+  const params = new URLSearchParams({ search_terms: query, page_size: pageSize });
+  const resp = await fetch(`https://world.openfoodfacts.org/api/v2/search?${params}`);
+  if (!resp.ok) throw new Error("Search failed");
+  const data = await resp.json();
+  return (data.products || []).filter((p) => p.product_name).map(offProductToFood);
+}
+
+async function offLookupBarcode(barcode) {
+  const resp = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`);
+  if (!resp.ok) throw new Error("Lookup failed");
+  const data = await resp.json();
+  if (data.status !== 1) return null;
+  return offProductToFood(data.product);
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -494,7 +557,11 @@ async function renderFoodsList() {
   view.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">Your library</p><h1>Foods</h1></div>
-      <a class="pill-btn" href="#/foods/new">${icons.plus} Add</a>
+      <div class="page-head-actions">
+        <a class="pill-btn secondary" href="#/foods/scan">Scan barcode</a>
+        <a class="pill-btn secondary" href="#/foods/search">Search online</a>
+        <a class="pill-btn" href="#/foods/new">${icons.plus} Add</a>
+      </div>
     </div>
     ${
       foods.length
@@ -536,6 +603,201 @@ async function renderFoodsList() {
       renderFoodsList();
     })
   );
+}
+
+async function renderFoodSearch() {
+  const hash = location.hash;
+  const qIndex = hash.indexOf("?");
+  const params = qIndex === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qIndex));
+  const query = params.get("q") || "";
+
+  view.innerHTML = `
+    <div class="page-head"><div><p class="eyebrow">Food library</p><h1>Search Online</h1></div></div>
+    <form id="searchForm" class="search-bar">
+      <input type="text" id="searchQuery" value="${esc(query)}" placeholder="e.g. oats, greek yogurt, protein bar" autofocus>
+      <button type="submit" class="btn primary">Search</button>
+    </form>
+    <p class="empty">Searches a free public packaged-food database (Open Food Facts) &mdash; best for branded/packaged items, not home-cooked dishes. Requires internet; results vary in completeness.</p>
+    <div id="searchResults"></div>
+  `;
+
+  document.getElementById("searchForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = document.getElementById("searchQuery").value.trim();
+    location.hash = `#/foods/search?q=${encodeURIComponent(q)}`;
+  });
+
+  if (!query) return;
+
+  const resultsEl = document.getElementById("searchResults");
+  resultsEl.innerHTML = `<p class="empty">Searching&hellip;</p>`;
+  let results = [];
+  try {
+    results = await offSearch(query);
+  } catch (err) {
+    resultsEl.innerHTML = `<p class="empty">Couldn't reach the online food database. Check your internet connection and try again.</p>`;
+    return;
+  }
+
+  resultsEl.innerHTML = results.length
+    ? `<div class="item-grid">
+        ${results
+          .map(
+            (r, i) => `
+        <div class="item-card" style="animation-delay:${i * 30}ms">
+          <div class="item-card-top">
+            <div><div class="item-name">${esc(r.name)}</div><div class="item-sub">${esc(r.brand)}${r.brand ? " &middot; " : ""}per ${esc(r.servingUnit)}</div></div>
+            <div class="item-kcal food">${Math.round(r.calories)}<span>kcal</span></div>
+          </div>
+          <div class="item-macros">
+            <span><i class="dot protein"></i>${r.proteinG.toFixed(1)}g</span>
+            <span><i class="dot carbs"></i>${r.carbsG.toFixed(1)}g</span>
+            <span><i class="dot fat"></i>${r.fatG.toFixed(1)}g</span>
+          </div>
+          <button type="button" class="btn primary" style="width:100%" data-add-search="${i}">${icons.plus} Add to my foods</button>
+        </div>`
+          )
+          .join("")}
+      </div>`
+    : `<p class="empty">No results for &ldquo;${esc(query)}&rdquo;.</p>`;
+
+  resultsEl.querySelectorAll("[data-add-search]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const r = results[Number(btn.dataset.addSearch)];
+      const payload = { name: r.name, servingUnit: r.servingUnit, calories: r.calories, proteinG: r.proteinG, carbsG: r.carbsG, fatG: r.fatG };
+      for (const k of NUTRIENT_KEYS) payload[k] = r[k] ?? 0;
+      await db.add("foods", payload);
+      toast(`Added "${r.name}" to your foods`);
+      btn.textContent = "Added";
+      btn.disabled = true;
+    });
+  });
+}
+
+let activeScanner = null;
+
+function loadHtml5Qrcode() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "vendor/html5-qrcode.min.js";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Failed to load scanner library"));
+    document.head.appendChild(script);
+  });
+}
+
+async function stopActiveScanner() {
+  if (!activeScanner) return;
+  const scanner = activeScanner;
+  activeScanner = null;
+  try {
+    await scanner.stop();
+  } catch (err) {
+    // camera may already be stopped/torn down by navigation; nothing to do
+  }
+}
+
+async function renderBarcodeScanner() {
+  view.innerHTML = `
+    <div class="page-head"><div><p class="eyebrow">Food library</p><h1>Scan Barcode</h1></div></div>
+    <div class="card">
+      <div id="scannerBox" class="scanner-box"></div>
+      <p class="empty" id="scannerStatus">Starting camera&hellip;</p>
+      <div class="form-actions"><a class="btn" href="#/foods">Cancel</a></div>
+    </div>
+    <div id="scanResult"></div>
+  `;
+
+  const statusEl = document.getElementById("scannerStatus");
+
+  try {
+    await loadHtml5Qrcode();
+  } catch (err) {
+    statusEl.textContent = "Couldn't load the barcode scanner. Check your internet connection (needed once) and try again.";
+    return;
+  }
+
+  const formats = window.Html5QrcodeSupportedFormats
+    ? [
+        window.Html5QrcodeSupportedFormats.EAN_13,
+        window.Html5QrcodeSupportedFormats.EAN_8,
+        window.Html5QrcodeSupportedFormats.UPC_A,
+        window.Html5QrcodeSupportedFormats.UPC_E,
+      ]
+    : undefined;
+
+  const scanner = new window.Html5Qrcode("scannerBox", formats ? { formatsToSupport: formats } : undefined);
+  activeScanner = scanner;
+  let handled = false;
+
+  try {
+    await scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 240, height: 160 } },
+      async (decodedText) => {
+        if (handled) return;
+        handled = true;
+        statusEl.textContent = `Found barcode ${decodedText} — looking it up…`;
+        await stopActiveScanner();
+        await handleScannedBarcode(decodedText);
+      },
+      () => {}
+    );
+    statusEl.textContent = "Point your camera at a barcode.";
+  } catch (err) {
+    statusEl.textContent = "Couldn't access the camera. Check camera permissions for this site in your browser settings.";
+    activeScanner = null;
+  }
+}
+
+async function handleScannedBarcode(barcode) {
+  const resultEl = document.getElementById("scanResult");
+  if (!resultEl) return;
+  resultEl.innerHTML = `<p class="empty">Looking up barcode ${esc(barcode)}&hellip;</p>`;
+
+  let product = null;
+  try {
+    product = await offLookupBarcode(barcode);
+  } catch (err) {
+    resultEl.innerHTML = `<p class="empty">Couldn't reach the online food database. Check your internet connection and try again.</p>`;
+    return;
+  }
+
+  if (!product) {
+    resultEl.innerHTML = `<p class="empty">No product found for barcode ${esc(barcode)}. <a href="#/foods/new">Add it manually</a> or try <a href="#/foods/search">searching by name</a>.</p>`;
+    return;
+  }
+
+  resultEl.innerHTML = `
+    <div class="item-card">
+      <div class="item-card-top">
+        <div><div class="item-name">${esc(product.name)}</div><div class="item-sub">${esc(product.brand)}${product.brand ? " &middot; " : ""}per ${esc(product.servingUnit)}</div></div>
+        <div class="item-kcal food">${Math.round(product.calories)}<span>kcal</span></div>
+      </div>
+      <div class="item-macros">
+        <span><i class="dot protein"></i>${product.proteinG.toFixed(1)}g</span>
+        <span><i class="dot carbs"></i>${product.carbsG.toFixed(1)}g</span>
+        <span><i class="dot fat"></i>${product.fatG.toFixed(1)}g</span>
+      </div>
+      <button type="button" class="btn primary" style="width:100%" id="addScannedFood">${icons.plus} Add to my foods</button>
+    </div>
+  `;
+
+  document.getElementById("addScannedFood").addEventListener("click", async () => {
+    const payload = {
+      name: product.name,
+      servingUnit: product.servingUnit,
+      calories: product.calories,
+      proteinG: product.proteinG,
+      carbsG: product.carbsG,
+      fatG: product.fatG,
+    };
+    for (const k of NUTRIENT_KEYS) payload[k] = product[k] ?? 0;
+    await db.add("foods", payload);
+    toast(`Added "${product.name}" to your foods`);
+    location.hash = "#/foods";
+  });
 }
 
 async function renderFoodForm(id) {
@@ -1086,6 +1348,8 @@ const routes = [
   { pattern: /^#\/(\?.*)?$/, tab: "dashboard", title: "Dashboard", render: renderDashboard },
   { pattern: /^#\/foods$/, tab: "foods", title: "Foods", render: renderFoodsList },
   { pattern: /^#\/foods\/new$/, tab: "foods", title: "Add Food", render: () => renderFoodForm(null) },
+  { pattern: /^#\/foods\/search(\?.*)?$/, tab: "foods", title: "Search Online", render: renderFoodSearch },
+  { pattern: /^#\/foods\/scan$/, tab: "foods", title: "Scan Barcode", render: renderBarcodeScanner },
   { pattern: /^#\/foods\/(\d+)\/edit$/, tab: "foods", title: "Edit Food", render: (m) => renderFoodForm(Number(m[1])) },
   { pattern: /^#\/exercises$/, tab: "exercises", title: "Exercises", render: renderExercisesList },
   { pattern: /^#\/exercises\/new$/, tab: "exercises", title: "Add Exercise", render: () => renderExerciseForm(null) },
@@ -1100,6 +1364,7 @@ const routes = [
 
 async function router() {
   const hash = location.hash || "#/";
+  if (!/^#\/foods\/scan$/.test(hash)) await stopActiveScanner();
   for (const r of routes) {
     const m = hash.match(r.pattern);
     if (m) {
@@ -1124,4 +1389,8 @@ async function seedIfEmpty() {
 }
 
 window.addEventListener("hashchange", router);
+window.addEventListener("pagehide", stopActiveScanner);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopActiveScanner();
+});
 seedIfEmpty().then(router);
