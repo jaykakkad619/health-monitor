@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}Weight - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Body tracking</p>
+      <h1>Weight</h1>
+    </div>
+    {% if latest %}
+      <div class="latest-weight">
+        <span class="latest-weight-value">{{ "%.1f"|format(latest.weight_kg) }}<small>kg</small></span>
+        <span class="latest-weight-date">{{ latest.log_date }}</span>
+      </div>
+    {% endif %}
+  </div>
+
+  <section class="card">
+    <form method="post" class="quick-add">
+      <input type="date" name="log_date" value="{{ today }}" required>
+      <input type="number" step="0.1" min="0" name="weight_kg" placeholder="Weight (kg)" required>
+      <button type="submit">{{ icons.plus() }}</button>
+    </form>
+
+    {% if points|length > 1 %}
+      <div class="weight-chart-wrap">
+        <svg class="weight-chart" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline points="{{ polyline }}" fill="none" stroke="var(--lime)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+          {% for x, y in points %}
+            <circle cx="{{ x }}" cy="{{ y }}" r="1.6" fill="var(--lime)"/>
+          {% endfor %}
+        </svg>
+      </div>
+    {% elif not rows %}
+      <p class="empty">Log your weight to start seeing a trend.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>History</h2>
+    {% if rows %}
+      <ul class="log-list">
+        {% for r in rows %}
+        <li class="log-item">
+          <div class="log-item-main">
+            <span class="log-item-name">{{ "%.1f"|format(r.weight_kg) }} kg</span>
+            <span class="log-item-meta">{{ r.log_date }}</span>
+          </div>
+          <form method="post" action="{{ url_for('delete_weight', log_id=r.id) }}">
+            <button class="icon-btn danger" type="submit">{{ icons.trash() }}</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">No entries yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -831,6 +831,257 @@ async function renderSettings() {
   });
 }
 
+async function renderWeight() {
+  const rows = (await db.getAll("weightLogs")).sort((a, b) => a.date.localeCompare(b.date));
+  const n = rows.length;
+  const points = [];
+  if (n) {
+    const values = rows.map((r) => r.weightKg);
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const span = high - low || 1;
+    rows.forEach((r, i) => {
+      const x = n > 1 ? (i / (n - 1)) * 100 : 50;
+      const y = 100 - ((r.weightKg - low) / span) * 100;
+      points.push([Math.round(x * 100) / 100, Math.round(y * 100) / 100]);
+    });
+  }
+  const polyline = points.map(([x, y]) => `${x},${y}`).join(" ");
+  const latest = rows[rows.length - 1];
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div><p class="eyebrow">Body tracking</p><h1>Weight</h1></div>
+      ${
+        latest
+          ? `<div class="latest-weight"><span class="latest-weight-value">${latest.weightKg.toFixed(1)}<small>kg</small></span><span class="latest-weight-date">${latest.date}</span></div>`
+          : ""
+      }
+    </div>
+    <section class="card">
+      <form id="weightForm" class="quick-add">
+        <input type="date" id="weightDate" value="${todayISO()}" required>
+        <input type="number" step="0.1" min="0" id="weightKg" placeholder="Weight (kg)" required>
+        <button type="submit">${icons.plus}</button>
+      </form>
+      ${
+        points.length > 1
+          ? `<div class="weight-chart-wrap"><svg class="weight-chart" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <polyline points="${polyline}" fill="none" stroke="var(--lime)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+              ${points.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.8" fill="var(--lime)"/>`).join("")}
+            </svg></div>`
+          : !rows.length
+          ? `<p class="empty">Log your weight to start seeing a trend.</p>`
+          : ""
+      }
+    </section>
+    <section class="card">
+      <h2>History</h2>
+      ${
+        rows.length
+          ? `<ul class="log-list">
+              ${rows
+                .slice()
+                .reverse()
+                .map(
+                  (r) => `
+              <li class="log-item">
+                <div class="log-item-main"><span class="log-item-name">${r.weightKg.toFixed(1)} kg</span><span class="log-item-meta">${r.date}</span></div>
+                <button class="icon-btn danger" data-delete-weight="${r.id}">${icons.trash}</button>
+              </li>`
+                )
+                .join("")}
+            </ul>`
+          : `<p class="empty">No entries yet.</p>`
+      }
+    </section>
+  `;
+
+  document.getElementById("weightForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const dateVal = document.getElementById("weightDate").value;
+    const weightKg = parseFloat(document.getElementById("weightKg").value);
+    if (!dateVal || !weightKg) return;
+    await db.add("weightLogs", { date: dateVal, weightKg });
+    toast("Weight logged");
+    renderWeight();
+  });
+
+  view.querySelectorAll("[data-delete-weight]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await db.remove("weightLogs", Number(btn.dataset.deleteWeight));
+      renderWeight();
+    });
+  });
+}
+
+async function renderRecipesList() {
+  const [recipeRows, foods] = await Promise.all([db.getAll("recipes"), db.getAll("foods")]);
+  const foodsById = new Map(foods.map((f) => [f.id, f]));
+  const rows = recipeRows
+    .map((r) => ({ ...r, food: foodsById.get(r.foodId) }))
+    .filter((r) => r.food)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div><p class="eyebrow">Your library</p><h1>Recipes</h1></div>
+      <a class="pill-btn" href="#/recipes/new">${icons.plus} Add</a>
+    </div>
+    ${
+      rows.length
+        ? `<div class="item-grid">
+            ${rows
+              .map(
+                (r, i) => `
+            <div class="item-card" style="animation-delay:${i * 30}ms">
+              <div class="item-card-top">
+                <div><div class="item-name">${esc(r.name)}</div><div class="item-sub">makes ${r.yieldsServings} serving${r.yieldsServings != 1 ? "s" : ""}</div></div>
+                <div class="item-kcal food">${Math.round(r.food.calories)}<span>kcal/serving</span></div>
+              </div>
+              <div class="item-macros">
+                <span><i class="dot protein"></i>${r.food.proteinG.toFixed(1)}g</span>
+                <span><i class="dot carbs"></i>${r.food.carbsG.toFixed(1)}g</span>
+                <span><i class="dot fat"></i>${r.food.fatG.toFixed(1)}g</span>
+              </div>
+              <div class="item-actions">
+                <button data-edit-recipe="${r.id}">${icons.pencil} Edit</button>
+                <button class="danger" data-delete-recipe="${r.id}">${icons.trash} Delete</button>
+              </div>
+            </div>`
+              )
+              .join("")}
+          </div>`
+        : `<p class="empty">No recipes yet. <a href="#/recipes/new">Add your first one</a>.</p>`
+    }
+  `;
+
+  view.querySelectorAll("[data-edit-recipe]").forEach((b) =>
+    b.addEventListener("click", () => (location.hash = `#/recipes/${b.dataset.editRecipe}/edit`))
+  );
+  view.querySelectorAll("[data-delete-recipe]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Delete this recipe? This also removes it from your food list and any logged entries.")) return;
+      const id = Number(b.dataset.deleteRecipe);
+      const recipe = await db.get("recipes", id);
+      if (recipe) {
+        await db.remove("foods", recipe.foodId);
+        await db.removeWhere("foodLogs", (l) => l.foodId === recipe.foodId);
+        await db.remove("recipes", id);
+        await db.removeWhere("recipeIngredients", (ri) => ri.recipeId === id);
+      }
+      toast("Recipe deleted");
+      renderRecipesList();
+    })
+  );
+}
+
+async function computeRecipeNutrition(ingredients, yieldsServings) {
+  const totals = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+  for (const k of NUTRIENT_KEYS) totals[k] = 0;
+  for (const { foodId, servings } of ingredients) {
+    const food = await db.get("foods", foodId);
+    if (!food) continue;
+    totals.calories += food.calories * servings;
+    totals.proteinG += food.proteinG * servings;
+    totals.carbsG += food.carbsG * servings;
+    totals.fatG += food.fatG * servings;
+    for (const k of NUTRIENT_KEYS) totals[k] += (food[k] || 0) * servings;
+  }
+  const y = yieldsServings || 1;
+  const result = {};
+  for (const k of Object.keys(totals)) result[k] = totals[k] / y;
+  return result;
+}
+
+function ingredientRowHtml(foods, selectedFoodId, servings) {
+  return `
+    <div class="ingredient-row">
+      <select class="ingredientFoodId" required>
+        <option value="" ${!selectedFoodId ? "disabled selected" : ""}>Select food&hellip;</option>
+        ${foods.map((f) => `<option value="${f.id}" ${f.id === selectedFoodId ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
+      </select>
+      <input type="number" step="0.1" min="0" class="ingredientServings" value="${servings ?? 1}" placeholder="Servings" required>
+      <button type="button" class="icon-btn danger remove-ingredient">${icons.trash}</button>
+    </div>`;
+}
+
+async function renderRecipeForm(id) {
+  const foods = (await db.getAll("foods")).sort((a, b) => a.name.localeCompare(b.name));
+  const recipe = id ? await db.get("recipes", id) : null;
+  const ingredientRows = id ? await db.getAllByIndex("recipeIngredients", "byRecipe", id) : [];
+
+  view.innerHTML = `
+    <div class="page-head"><div><p class="eyebrow">Recipe library</p><h1>${recipe ? "Edit" : "Add"} Recipe</h1></div></div>
+    <div class="card form-card">
+      <form id="recipeForm" class="form">
+        <label>Recipe name<input type="text" id="rName" required value="${recipe ? esc(recipe.name) : ""}" placeholder="e.g. My dal + rice + sabzi plate"></label>
+        <label>Yields (servings)<input type="number" step="0.1" min="0.1" id="rYields" value="${recipe ? recipe.yieldsServings : 1}" placeholder="e.g. 4"></label>
+        <div class="ingredient-list" id="ingredientList">
+          ${
+            ingredientRows.length
+              ? ingredientRows.map((ing) => ingredientRowHtml(foods, ing.foodId, ing.servings)).join("")
+              : ingredientRowHtml(foods, null, 1)
+          }
+        </div>
+        <a class="btn" id="addIngredient">${icons.plus} Add ingredient</a>
+        <div class="form-actions">
+          <button type="submit" class="btn primary">Save Recipe</button>
+          <a class="btn" href="#/recipes">Cancel</a>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.getElementById("addIngredient").addEventListener("click", () => {
+    document.getElementById("ingredientList").insertAdjacentHTML("beforeend", ingredientRowHtml(foods, null, 1));
+  });
+  document.getElementById("ingredientList").addEventListener("click", (e) => {
+    const btn = e.target.closest(".remove-ingredient");
+    if (btn) btn.closest(".ingredient-row").remove();
+  });
+
+  document.getElementById("recipeForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = document.getElementById("rName").value.trim();
+    const yieldsServings = parseFloat(document.getElementById("rYields").value) || 1;
+    const ingredients = Array.from(document.querySelectorAll(".ingredient-row"))
+      .map((row) => ({
+        foodId: Number(row.querySelector(".ingredientFoodId").value),
+        servings: parseFloat(row.querySelector(".ingredientServings").value),
+      }))
+      .filter((i) => i.foodId && i.servings);
+
+    const nutrition = await computeRecipeNutrition(ingredients, yieldsServings);
+    const foodPayload = {
+      name,
+      servingUnit: "1 serving",
+      calories: nutrition.calories,
+      proteinG: nutrition.proteinG,
+      carbsG: nutrition.carbsG,
+      fatG: nutrition.fatG,
+    };
+    for (const k of NUTRIENT_KEYS) foodPayload[k] = nutrition[k];
+
+    if (recipe) {
+      await db.put("foods", { ...foodPayload, id: recipe.foodId });
+      await db.put("recipes", { ...recipe, name, yieldsServings });
+      await db.removeWhere("recipeIngredients", (ri) => ri.recipeId === recipe.id);
+      for (const ing of ingredients) {
+        await db.add("recipeIngredients", { recipeId: recipe.id, foodId: ing.foodId, servings: ing.servings });
+      }
+    } else {
+      const foodId = await db.add("foods", foodPayload);
+      const recipeId = await db.add("recipes", { foodId, name, yieldsServings });
+      for (const ing of ingredients) {
+        await db.add("recipeIngredients", { recipeId, foodId: ing.foodId, servings: ing.servings });
+      }
+    }
+    toast("Recipe saved");
+    location.hash = "#/recipes";
+  });
+}
+
 const routes = [
   { pattern: /^#\/(\?.*)?$/, tab: "dashboard", title: "Dashboard", render: renderDashboard },
   { pattern: /^#\/foods$/, tab: "foods", title: "Foods", render: renderFoodsList },
@@ -839,6 +1090,10 @@ const routes = [
   { pattern: /^#\/exercises$/, tab: "exercises", title: "Exercises", render: renderExercisesList },
   { pattern: /^#\/exercises\/new$/, tab: "exercises", title: "Add Exercise", render: () => renderExerciseForm(null) },
   { pattern: /^#\/exercises\/(\d+)\/edit$/, tab: "exercises", title: "Edit Exercise", render: (m) => renderExerciseForm(Number(m[1])) },
+  { pattern: /^#\/recipes$/, tab: "recipes", title: "Recipes", render: renderRecipesList },
+  { pattern: /^#\/recipes\/new$/, tab: "recipes", title: "Add Recipe", render: () => renderRecipeForm(null) },
+  { pattern: /^#\/recipes\/(\d+)\/edit$/, tab: "recipes", title: "Edit Recipe", render: (m) => renderRecipeForm(Number(m[1])) },
+  { pattern: /^#\/weight$/, tab: "weight", title: "Weight", render: renderWeight },
   { pattern: /^#\/history$/, tab: "history", title: "History", render: renderHistory },
   { pattern: /^#\/settings$/, tab: "settings", title: "Settings", render: renderSettings },
 ];

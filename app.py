@@ -511,6 +511,172 @@ def import_data():
     return redirect(url_for("settings"))
 
 
+@app.route("/weight", methods=["GET", "POST"])
+def weight():
+    conn = db.get_db()
+    if request.method == "POST":
+        conn.execute(
+            "INSERT INTO weight_logs (log_date, weight_kg) VALUES (?, ?)",
+            (request.form["log_date"], request.form["weight_kg"]),
+        )
+        conn.commit()
+        flash("Weight logged.")
+        return redirect(url_for("weight"))
+
+    rows = conn.execute("SELECT * FROM weight_logs ORDER BY log_date ASC").fetchall()
+    n = len(rows)
+    points = []
+    if n:
+        values = [r["weight_kg"] for r in rows]
+        low, high = min(values), max(values)
+        span = (high - low) or 1
+        for i, r in enumerate(rows):
+            x = (i / (n - 1) * 100) if n > 1 else 50
+            y = 100 - ((r["weight_kg"] - low) / span * 100)
+            points.append((round(x, 2), round(y, 2)))
+    polyline = " ".join(f"{x},{y}" for x, y in points)
+
+    return render_template(
+        "weight.html",
+        rows=list(reversed(rows)),
+        points=points,
+        polyline=polyline,
+        latest=rows[-1] if rows else None,
+        today=date.today().isoformat(),
+    )
+
+
+@app.route("/weight/<int:log_id>/delete", methods=["POST"])
+def delete_weight(log_id):
+    conn = db.get_db()
+    conn.execute("DELETE FROM weight_logs WHERE id = ?", (log_id,))
+    conn.commit()
+    return redirect(url_for("weight"))
+
+
+RECIPE_NUTRITION_KEYS = ["calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+
+
+def compute_recipe_nutrition(ingredients, yields_servings):
+    """ingredients: list of (food_id, servings). Returns per-serving nutrition dict."""
+    conn = db.get_db()
+    totals = {k: 0.0 for k in RECIPE_NUTRITION_KEYS}
+    for food_id, servings in ingredients:
+        food = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
+        if not food:
+            continue
+        for k in RECIPE_NUTRITION_KEYS:
+            totals[k] += food[k] * servings
+    yields_servings = yields_servings or 1
+    return {k: v / yields_servings for k, v in totals.items()}
+
+
+def _recipe_ingredients_from_form():
+    food_ids = request.form.getlist("ingredient_food_id")
+    servings_list = request.form.getlist("ingredient_servings")
+    pairs = []
+    for fid, srv in zip(food_ids, servings_list):
+        if fid and srv:
+            pairs.append((int(fid), float(srv)))
+    return pairs
+
+
+@app.route("/recipes")
+def recipes():
+    conn = db.get_db()
+    rows = conn.execute(
+        """
+        SELECT r.id, r.name, r.yields_servings, f.calories, f.protein_g, f.carbs_g, f.fat_g
+        FROM recipes r JOIN foods f ON f.id = r.food_id
+        ORDER BY r.name
+        """
+    ).fetchall()
+    return render_template("recipes.html", recipes=rows)
+
+
+@app.route("/recipes/new", methods=["GET", "POST"])
+def new_recipe():
+    conn = db.get_db()
+    if request.method == "POST":
+        name = request.form["name"]
+        yields_servings = float(request.form.get("yields_servings") or 1)
+        ingredients = _recipe_ingredients_from_form()
+        nutrition = compute_recipe_nutrition(ingredients, yields_servings)
+
+        cols = ["name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+        placeholders = ", ".join("?" for _ in cols)
+        values = [name, "1 serving", nutrition["calories"], nutrition["protein_g"], nutrition["carbs_g"], nutrition["fat_g"]]
+        values += [nutrition[k] for k in NUTRIENT_KEYS]
+        cur = conn.execute(f"INSERT INTO foods ({', '.join(cols)}) VALUES ({placeholders})", values)
+        food_id = cur.lastrowid
+
+        cur = conn.execute(
+            "INSERT INTO recipes (food_id, name, yields_servings) VALUES (?, ?, ?)",
+            (food_id, name, yields_servings),
+        )
+        recipe_id = cur.lastrowid
+        for fid, srv in ingredients:
+            conn.execute(
+                "INSERT INTO recipe_ingredients (recipe_id, food_id, servings) VALUES (?, ?, ?)",
+                (recipe_id, fid, srv),
+            )
+        conn.commit()
+        flash("Recipe saved.")
+        return redirect(url_for("recipes"))
+
+    foods = conn.execute("SELECT * FROM foods ORDER BY name").fetchall()
+    return render_template("recipe_form.html", recipe=None, ingredients=[], foods=foods)
+
+
+@app.route("/recipes/<int:recipe_id>/edit", methods=["GET", "POST"])
+def edit_recipe(recipe_id):
+    conn = db.get_db()
+    recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+    if request.method == "POST":
+        name = request.form["name"]
+        yields_servings = float(request.form.get("yields_servings") or 1)
+        ingredients = _recipe_ingredients_from_form()
+        nutrition = compute_recipe_nutrition(ingredients, yields_servings)
+
+        assignments = ", ".join(f"{col} = ?" for col in ["name", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS)
+        values = [name, nutrition["calories"], nutrition["protein_g"], nutrition["carbs_g"], nutrition["fat_g"]]
+        values += [nutrition[k] for k in NUTRIENT_KEYS]
+        conn.execute(f"UPDATE foods SET {assignments} WHERE id = ?", values + [recipe["food_id"]])
+
+        conn.execute("UPDATE recipes SET name = ?, yields_servings = ? WHERE id = ?", (name, yields_servings, recipe_id))
+        conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
+        for fid, srv in ingredients:
+            conn.execute(
+                "INSERT INTO recipe_ingredients (recipe_id, food_id, servings) VALUES (?, ?, ?)",
+                (recipe_id, fid, srv),
+            )
+        conn.commit()
+        flash("Recipe updated.")
+        return redirect(url_for("recipes"))
+
+    ingredient_rows = conn.execute(
+        """
+        SELECT ri.food_id, ri.servings, f.name
+        FROM recipe_ingredients ri JOIN foods f ON f.id = ri.food_id
+        WHERE ri.recipe_id = ?
+        """,
+        (recipe_id,),
+    ).fetchall()
+    foods = conn.execute("SELECT * FROM foods ORDER BY name").fetchall()
+    return render_template("recipe_form.html", recipe=recipe, ingredients=ingredient_rows, foods=foods)
+
+
+@app.route("/recipes/<int:recipe_id>/delete", methods=["POST"])
+def delete_recipe(recipe_id):
+    conn = db.get_db()
+    recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+    if recipe:
+        conn.execute("DELETE FROM foods WHERE id = ?", (recipe["food_id"],))
+    conn.commit()
+    flash("Recipe deleted.")
+    return redirect(url_for("recipes"))
+
+
 def lan_ip():
     import socket
 

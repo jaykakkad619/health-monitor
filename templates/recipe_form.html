@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}{{ 'Edit' if recipe else 'Add' }} Recipe - Health Monitor{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Recipe library</p>
+      <h1>{{ 'Edit' if recipe else 'Add' }} Recipe</h1>
+    </div>
+  </div>
+  <div class="card form-card">
+    <form method="post" class="form">
+      <label>Recipe name
+        <input type="text" name="name" required autofocus value="{{ recipe.name if recipe else '' }}" placeholder="e.g. My dal + rice + sabzi plate">
+      </label>
+      <label>Yields (servings)
+        <input type="number" step="0.1" min="0.1" name="yields_servings" value="{{ recipe.yields_servings if recipe else 1 }}" placeholder="e.g. 4">
+      </label>
+
+      <div class="ingredient-list" id="ingredientList">
+        {% for ing in ingredients %}
+        <div class="ingredient-row">
+          <select name="ingredient_food_id" required>
+            {% for f in foods %}
+              <option value="{{ f.id }}" {{ 'selected' if f.id == ing.food_id else '' }}>{{ f.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" step="0.1" min="0" name="ingredient_servings" value="{{ ing.servings }}" placeholder="Servings" required>
+          <button type="button" class="icon-btn danger remove-ingredient">{{ icons.trash() }}</button>
+        </div>
+        {% else %}
+        <div class="ingredient-row">
+          <select name="ingredient_food_id" required>
+            <option value="" disabled selected>Select food&hellip;</option>
+            {% for f in foods %}
+              <option value="{{ f.id }}">{{ f.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" step="0.1" min="0" name="ingredient_servings" value="1" placeholder="Servings" required>
+          <button type="button" class="icon-btn danger remove-ingredient">{{ icons.trash() }}</button>
+        </div>
+        {% endfor %}
+      </div>
+      <a class="btn" id="addIngredient">{{ icons.plus() }} Add ingredient</a>
+
+      <div class="form-actions">
+        <button type="submit" class="btn primary">Save Recipe</button>
+        <a class="btn" href="{{ url_for('recipes') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+
+  <template id="ingredientRowTemplate">
+    <div class="ingredient-row">
+      <select name="ingredient_food_id" required>
+        <option value="" disabled selected>Select food&hellip;</option>
+        {% for f in foods %}
+          <option value="{{ f.id }}">{{ f.name }}</option>
+        {% endfor %}
+      </select>
+      <input type="number" step="0.1" min="0" name="ingredient_servings" value="1" placeholder="Servings" required>
+      <button type="button" class="icon-btn danger remove-ingredient">{{ icons.trash() }}</button>
+    </div>
+  </template>
+
+  <script>
+    document.getElementById('addIngredient').addEventListener('click', () => {
+      const tpl = document.getElementById('ingredientRowTemplate');
+      document.getElementById('ingredientList').appendChild(tpl.content.cloneNode(true));
+    });
+    document.getElementById('ingredientList').addEventListener('click', (e) => {
+      const btn = e.target.closest('.remove-ingredient');
+      if (btn) btn.closest('.ingredient-row').remove();
+    });
+  </script>
+{% endblock %}

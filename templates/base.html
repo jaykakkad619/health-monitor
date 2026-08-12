@@ -18,6 +18,8 @@
         <a class="nav-item {{ 'active' if request.path == '/' }}" href="{{ url_for('dashboard') }}">{{ icons.pulse() }}<span>Dashboard</span></a>
         <a class="nav-item {{ 'active' if request.path.startswith('/foods') }}" href="{{ url_for('foods') }}">{{ icons.fork() }}<span>Foods</span></a>
         <a class="nav-item {{ 'active' if request.path.startswith('/exercises') }}" href="{{ url_for('exercises') }}">{{ icons.dumbbell() }}<span>Exercises</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/recipes') }}" href="{{ url_for('recipes') }}">{{ icons.book() }}<span>Recipes</span></a>
+        <a class="nav-item {{ 'active' if request.path.startswith('/weight') }}" href="{{ url_for('weight') }}">{{ icons.scale() }}<span>Weight</span></a>
         <a class="nav-item {{ 'active' if request.path.startswith('/history') }}" href="{{ url_for('history') }}">{{ icons.clock() }}<span>History</span></a>
         <a class="nav-item {{ 'active' if request.path.startswith('/settings') }}" href="{{ url_for('settings') }}">{{ icons.gear() }}<span>Settings</span></a>
       </nav>
