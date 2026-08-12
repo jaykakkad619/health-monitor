@@ -44,9 +44,10 @@ function offProductToFood(p) {
     const num = typeof v === "number" ? v : parseFloat(v);
     return Number.isFinite(num) ? num : 0;
   };
+  const brands = Array.isArray(p.brands) ? p.brands.join(", ") : String(p.brands || "");
   const food = {
     name: String(p.product_name || p.generic_name || "Unnamed product").trim(),
-    brand: String(p.brands || "").trim(),
+    brand: brands.trim(),
     servingUnit,
     calories: raw("energy-kcal"),
   };
@@ -55,8 +56,14 @@ function offProductToFood(p) {
 }
 
 async function offSearch(query, pageSize = 15) {
-  const params = new URLSearchParams({ search_terms: query, page_size: pageSize });
-  const resp = await fetch(`https://world.openfoodfacts.org/api/v2/search?${params}`);
+  // api/v2/search ignores search_terms and returns the whole DB unfiltered
+  // (confirmed empirically -- a nonsense query still returned 4.6M "matches").
+  // search.openfoodfacts.org (the newer search-a-licious backend) filters
+  // correctly but has no CORS headers, so it can't be called from the PWA.
+  // This legacy endpoint is the one that both filters correctly AND allows
+  // cross-origin browser requests, so both apps use it for consistency.
+  const params = new URLSearchParams({ search_terms: query, search_simple: 1, action: "process", json: 1, page_size: pageSize });
+  const resp = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params}`);
   if (!resp.ok) throw new Error("Search failed");
   const data = await resp.json();
   return (data.products || []).filter((p) => p.product_name).map(offProductToFood);

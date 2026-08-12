@@ -28,6 +28,10 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Safety net: any bare .icon not covered by a more specific sizing rule
+   below falls back to this instead of the browser's oversized SVG default. */
+.icon { width: 16px; height: 16px; flex-shrink: 0; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -173,6 +177,9 @@ h2 { font-size: 0.85rem; margin: 0 0 0.9rem; text-transform: uppercase; letter-s
 .icon-btn.danger { color: var(--danger); }
 
 .pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   padding: 0.5rem 0.95rem;
   border-radius: 999px;
   background: var(--lime);
@@ -181,6 +188,8 @@ h2 { font-size: 0.85rem; margin: 0 0 0.9rem; text-transform: uppercase; letter-s
   font-size: 0.78rem;
   white-space: nowrap;
 }
+
+.pill-btn .icon { width: 14px; height: 14px; }
 
 .pill-btn.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 .page-head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }

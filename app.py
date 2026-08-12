@@ -729,9 +729,13 @@ def off_product_to_food(p):
         except (TypeError, ValueError):
             return 0.0
 
+    brands = p.get("brands") or ""
+    if isinstance(brands, list):
+        brands = ", ".join(brands)
+
     food = {
         "name": (p.get("product_name") or p.get("generic_name") or "Unnamed product").strip(),
-        "brand": (p.get("brands") or "").strip(),
+        "brand": brands.strip(),
         "serving_unit": serving_unit,
         "calories": raw("energy-kcal"),
     }
@@ -743,8 +747,16 @@ def off_product_to_food(p):
 def off_search(query, page_size=15):
     import urllib.parse
 
-    params = urllib.parse.urlencode({"search_terms": query, "page_size": page_size})
-    data = _off_request(f"https://world.openfoodfacts.org/api/v2/search?{params}")
+    # api/v2/search ignores search_terms and returns the whole DB unfiltered
+    # (confirmed empirically -- a nonsense query still returned 4.6M "matches").
+    # search.openfoodfacts.org (the newer search-a-licious backend) filters
+    # correctly but has no CORS headers, so it can't be called from the PWA.
+    # This legacy endpoint is the one that both filters correctly AND allows
+    # cross-origin browser requests, so both apps use it for consistency.
+    params = urllib.parse.urlencode(
+        {"search_terms": query, "search_simple": 1, "action": "process", "json": 1, "page_size": page_size}
+    )
+    data = _off_request(f"https://world.openfoodfacts.org/cgi/search.pl?{params}")
     return [off_product_to_food(p) for p in data.get("products", []) if p.get("product_name")]
 
 
