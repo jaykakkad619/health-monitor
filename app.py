@@ -753,10 +753,12 @@ def off_search(query, page_size=15):
     # correctly but has no CORS headers, so it can't be called from the PWA.
     # This legacy endpoint is the one that both filters correctly AND allows
     # cross-origin browser requests, so both apps use it for consistency.
+    # Using the .net mirror instead of .org -- .org's search.pl has been
+    # returning 503 "temporarily unavailable" while .net serves it fine.
     params = urllib.parse.urlencode(
         {"search_terms": query, "search_simple": 1, "action": "process", "json": 1, "page_size": page_size}
     )
-    data = _off_request(f"https://world.openfoodfacts.org/cgi/search.pl?{params}")
+    data = _off_request(f"https://world.openfoodfacts.net/cgi/search.pl?{params}")
     return [off_product_to_food(p) for p in data.get("products", []) if p.get("product_name")]
 
 

@@ -62,8 +62,10 @@ async function offSearch(query, pageSize = 15) {
   // correctly but has no CORS headers, so it can't be called from the PWA.
   // This legacy endpoint is the one that both filters correctly AND allows
   // cross-origin browser requests, so both apps use it for consistency.
+  // Using the .net mirror instead of .org -- .org's search.pl has been
+  // returning 503 "temporarily unavailable" while .net serves it fine.
   const params = new URLSearchParams({ search_terms: query, search_simple: 1, action: "process", json: 1, page_size: pageSize });
-  const resp = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params}`);
+  const resp = await fetch(`https://world.openfoodfacts.net/cgi/search.pl?${params}`);
   if (!resp.ok) throw new Error("Search failed");
   const data = await resp.json();
   return (data.products || []).filter((p) => p.product_name).map(offProductToFood);
