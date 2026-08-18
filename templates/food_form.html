@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}{{ 'Edit' if food else 'Add' }} Food - Health Monitor{% endblock %}
 {% block content %}
   <div class="page-head">
@@ -12,12 +13,26 @@
       <label>Name
         <input type="text" name="name" value="{{ food.name if food else '' }}" required autofocus placeholder="e.g. Grilled chicken breast">
       </label>
-      <label>Serving unit
-        <input type="text" name="serving_unit" value="{{ food.serving_unit if food else 'serving' }}" placeholder="e.g. cup, 100g, slice">
-      </label>
-      <label>Calories per serving
-        <input type="number" step="0.1" min="0" name="calories" value="{{ food.calories if food else '' }}" required placeholder="0">
-      </label>
+      <div class="form-row-2">
+        <label>Serving unit
+          <input type="text" name="serving_unit" value="{{ food.serving_unit if food else 'serving' }}" placeholder="e.g. cup, 100g, slice">
+        </label>
+        <label>Category
+          <select name="category">
+            {% for key, label in categories %}
+              <option value="{{ key }}" {{ 'selected' if (food.category if food else 'other') == key else '' }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="form-row-2">
+        <label>Calories per serving
+          <input type="number" step="0.1" min="0" name="calories" value="{{ food.calories if food else '' }}" required placeholder="0">
+        </label>
+        <label>Serving size in grams <span class="label-hint">(optional &mdash; enables logging by weight)</span>
+          <input type="number" step="0.1" min="0" name="serving_size_g" value="{{ food.serving_size_g if food and food.serving_size_g else '' }}" placeholder="e.g. 100">
+        </label>
+      </div>
       <div class="form-row-3">
         <label>Protein (g)
           <input type="number" step="0.1" min="0" name="protein_g" value="{{ food.protein_g if food else 0 }}">
@@ -29,6 +44,19 @@
           <input type="number" step="0.1" min="0" name="fat_g" value="{{ food.fat_g if food else 0 }}">
         </label>
       </div>
+
+      <label>Quick-pick sizes <span class="label-hint">(optional &mdash; e.g. Small/Medium/Large, so logging can say "1 medium" instead of grams)</span></label>
+      <div class="size-preset-list" id="sizePresetList">
+        {% for p in size_presets %}
+        <div class="size-preset-row">
+          <input type="text" name="size_label" value="{{ p.label }}" placeholder="e.g. Medium">
+          <input type="number" step="0.1" min="0" name="size_grams" value="{{ p.grams }}" placeholder="grams">
+          <span class="unit-suffix">g</span>
+          <button type="button" class="icon-btn danger remove-size-preset">{{ icons.trash() }}</button>
+        </div>
+        {% endfor %}
+      </div>
+      <a class="btn" id="addSizePreset">{{ icons.plus() }} Add size</a>
 
       <details class="nutrient-details">
         <summary>Vitamins &amp; minerals (optional)</summary>
@@ -50,4 +78,24 @@
       </div>
     </form>
   </div>
+
+  <template id="sizePresetRowTemplate">
+    <div class="size-preset-row">
+      <input type="text" name="size_label" placeholder="e.g. Medium">
+      <input type="number" step="0.1" min="0" name="size_grams" placeholder="grams">
+      <span class="unit-suffix">g</span>
+      <button type="button" class="icon-btn danger remove-size-preset">{{ icons.trash() }}</button>
+    </div>
+  </template>
+
+  <script>
+    document.getElementById('addSizePreset').addEventListener('click', () => {
+      const tpl = document.getElementById('sizePresetRowTemplate');
+      document.getElementById('sizePresetList').appendChild(tpl.content.cloneNode(true));
+    });
+    document.getElementById('sizePresetList').addEventListener('click', (e) => {
+      const btn = e.target.closest('.remove-size-preset');
+      if (btn) btn.closest('.size-preset-row').remove();
+    });
+  </script>
 {% endblock %}

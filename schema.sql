@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS foods (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     serving_unit TEXT NOT NULL DEFAULT 'serving',
+    category TEXT NOT NULL DEFAULT 'other',
+    serving_size_g REAL,
+    size_presets TEXT,
     calories REAL NOT NULL,
     protein_g REAL NOT NULL DEFAULT 0,
     carbs_g REAL NOT NULL DEFAULT 0,
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS food_logs (
     log_date TEXT NOT NULL,
     food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
     servings REAL NOT NULL,
+    grams REAL,
     meal TEXT NOT NULL DEFAULT 'other',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

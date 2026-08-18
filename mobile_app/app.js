@@ -45,10 +45,13 @@ function offProductToFood(p) {
     return Number.isFinite(num) ? num : 0;
   };
   const brands = Array.isArray(p.brands) ? p.brands.join(", ") : String(p.brands || "");
+  const servingSizeG = hasServing ? (Number.isFinite(parseFloat(p.serving_quantity)) ? parseFloat(p.serving_quantity) : null) : 100;
   const food = {
     name: String(p.product_name || p.generic_name || "Unnamed product").trim(),
     brand: brands.trim(),
     servingUnit,
+    category: guessCategoryFromOff(p),
+    servingSizeG,
     calories: raw("energy-kcal"),
   };
   for (const [ourKey, offKey, mult] of OFF_FIELD_MAP) food[ourKey] = raw(offKey) * mult;
@@ -153,6 +156,41 @@ const MEALS = [
   ["snack", "Snack"],
   ["other", "Other"],
 ];
+
+const FOOD_CATEGORIES = [
+  ["fruits", "Fruits"],
+  ["exotic_fruits", "Exotic Fruits"],
+  ["vegetables", "Vegetables"],
+  ["grains", "Grains"],
+  ["protein", "Protein"],
+  ["dairy", "Dairy"],
+  ["snacks", "Snacks"],
+  ["beverages", "Beverages"],
+  ["other", "Other"],
+];
+const CATEGORY_LABELS = Object.fromEntries(FOOD_CATEGORIES);
+
+// Keyword -> our category, checked against OFF's categories_tags/food_groups_tags.
+// Order matters: more specific matches (exotic fruit) must be checked before broader ones (fruit).
+const OFF_CATEGORY_KEYWORDS = [
+  ["exotic_fruits", ["exotic-fruit"]],
+  ["fruits", ["fruit"]],
+  ["vegetables", ["vegetable", "legume"]],
+  ["dairy", ["dairy", "cheese", "yogurt", "yoghurt", "milk"]],
+  ["protein", ["meat", "poultry", "fish", "seafood", "egg"]],
+  ["grains", ["cereal", "bread", "pasta", "rice", "grain"]],
+  ["beverages", ["beverage", "drink", "juice"]],
+  ["snacks", ["snack", "chocolate", "candy", "biscuit", "cookie"]],
+];
+
+function guessCategoryFromOff(product) {
+  const tags = [...(product.categories_tags || []), ...(product.food_groups_tags || [])];
+  const text = tags.join(" ").toLowerCase();
+  for (const [key, keywords] of OFF_CATEGORY_KEYWORDS) {
+    if (keywords.some((kw) => text.includes(kw))) return key;
+  }
+  return "other";
+}
 
 function toSnake(key) {
   return key.replace(/([A-Z])/g, "_$1").toLowerCase();
@@ -266,6 +304,7 @@ async function dayTotals(dateStr) {
         name: f.name,
         servingUnit: f.servingUnit,
         servings: l.servings,
+        grams: l.grams || null,
         calories: f.calories * l.servings,
         proteinG: f.proteinG * l.servings,
         carbsG: f.carbsG * l.servings,
@@ -422,9 +461,18 @@ async function renderDashboard() {
       <form id="quickAddFood" class="quick-add">
         <select id="foodSelect" required>
           <option value="" disabled selected>Select food&hellip;</option>
-          ${totals.foods.map((f) => `<option value="${f.id}">${esc(f.name)} &middot; ${Math.round(f.calories)} kcal</option>`).join("")}
+          ${totals.foods
+            .map(
+              (f) =>
+                `<option value="${f.id}" data-serving-size-g="${f.servingSizeG || ""}" data-size-presets='${esc(JSON.stringify(f.sizePresets || []))}'>${esc(f.name)} &middot; ${Math.round(f.calories)} kcal</option>`
+            )
+            .join("")}
         </select>
         <input type="number" step="0.1" min="0" id="foodServings" placeholder="Qty" value="1" required>
+        <select id="foodSizeSelect" class="size-select" style="display:none">
+          <option value="">Custom grams&hellip;</option>
+        </select>
+        <input type="number" step="1" min="0" id="foodGrams" placeholder="grams" style="display:none">
         <select id="foodMeal" class="meal-select">
           ${MEALS.map(([key, label]) => `<option value="${key}" ${key === guessMeal() ? "selected" : ""}>${label}</option>`).join("")}
         </select>
@@ -446,7 +494,7 @@ async function renderDashboard() {
                     .map(
                       (row, i) => `
             <li class="log-item" style="animation-delay:${i * 40}ms">
-              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.servings} &times; ${esc(row.servingUnit)}</span></div>
+              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.grams ? `${Math.round(row.grams)}g` : `${row.servings} &times; ${esc(row.servingUnit)}`}</span></div>
               <span class="log-item-kcal">${Math.round(row.calories)}</span>
               <button class="icon-btn danger" data-delete-food-log="${row.id}">${icons.trash}</button>
             </li>`
@@ -526,13 +574,79 @@ async function renderDashboard() {
     location.hash = `#/?date=${e.target.value}`;
   });
 
+  const foodSelect = document.getElementById("foodSelect");
+  const foodQty = document.getElementById("foodServings");
+  const foodSizeSelect = document.getElementById("foodSizeSelect");
+  const foodGrams = document.getElementById("foodGrams");
+
+  function updateFoodInputs() {
+    const opt = foodSelect.selectedOptions[0];
+    const servingSizeG = opt && opt.dataset.servingSizeG;
+    let presets = [];
+    try {
+      presets = JSON.parse((opt && opt.dataset.sizePresets) || "[]");
+    } catch (e) {
+      presets = [];
+    }
+
+    foodSizeSelect.innerHTML = '<option value="">Custom grams&hellip;</option>';
+    for (const p of presets) {
+      const o = document.createElement("option");
+      o.value = p.grams;
+      o.textContent = `${p.label} (${p.grams}g)`;
+      foodSizeSelect.appendChild(o);
+    }
+
+    if (presets.length) {
+      foodSizeSelect.style.display = "";
+      foodGrams.style.display = "";
+      foodQty.style.display = "none";
+      foodQty.required = false;
+      foodSizeSelect.value = presets[0].grams;
+      foodGrams.value = presets[0].grams;
+    } else if (servingSizeG) {
+      foodSizeSelect.style.display = "none";
+      foodGrams.style.display = "";
+      foodQty.style.display = "none";
+      foodQty.required = false;
+      foodGrams.value = servingSizeG;
+    } else {
+      foodSizeSelect.style.display = "none";
+      foodGrams.style.display = "none";
+      foodQty.style.display = "";
+      foodQty.required = true;
+      foodGrams.value = "";
+    }
+  }
+
+  foodSizeSelect.addEventListener("change", () => {
+    if (foodSizeSelect.value) foodGrams.value = foodSizeSelect.value;
+  });
+  foodSelect.addEventListener("change", updateFoodInputs);
+
   document.getElementById("quickAddFood").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const foodId = Number(document.getElementById("foodSelect").value);
-    const servings = parseFloat(document.getElementById("foodServings").value);
+    const foodId = Number(foodSelect.value);
     const meal = document.getElementById("foodMeal").value;
-    if (!foodId || !servings) return;
-    await db.add("foodLogs", { date: dateStr, foodId, servings, meal });
+    if (!foodId) return;
+
+    let servings, grams;
+    const gramsVisible = foodGrams.style.display !== "none";
+    const gramsVal = gramsVisible ? parseFloat(foodGrams.value) : NaN;
+    if (Number.isFinite(gramsVal) && gramsVal > 0) {
+      const food = totals.foods.find((f) => f.id === foodId);
+      if (!food || !food.servingSizeG) {
+        toast("This food doesn't have a serving size in grams — log it by quantity instead.");
+        return;
+      }
+      grams = gramsVal;
+      servings = gramsVal / food.servingSizeG;
+    } else {
+      servings = parseFloat(foodQty.value);
+      if (!servings) return;
+    }
+
+    await db.add("foodLogs", { date: dateStr, foodId, servings, grams: grams || null, meal });
     toast("Food logged");
     renderDashboard();
   });
@@ -561,8 +675,39 @@ async function renderDashboard() {
   });
 }
 
+function foodCardHtml(f, i) {
+  return `
+    <div class="item-card" style="animation-delay:${i * 30}ms">
+      <div class="item-card-top">
+        <div><div class="item-name">${esc(f.name)}</div><div class="item-sub">per ${esc(f.servingUnit)}</div></div>
+        <div class="item-kcal food">${Math.round(f.calories)}<span>kcal</span></div>
+      </div>
+      <div class="item-macros">
+        <span><i class="dot protein"></i>${f.proteinG.toFixed(1)}g</span>
+        <span><i class="dot carbs"></i>${f.carbsG.toFixed(1)}g</span>
+        <span><i class="dot fat"></i>${f.fatG.toFixed(1)}g</span>
+      </div>
+      <div class="item-actions">
+        <button data-edit-food="${f.id}">${icons.pencil} Edit</button>
+        <button class="danger" data-delete-food="${f.id}">${icons.trash} Delete</button>
+      </div>
+    </div>`;
+}
+
 async function renderFoodsList() {
-  const foods = (await db.getAll("foods")).sort((a, b) => a.name.localeCompare(b.name));
+  const hash = location.hash;
+  const qIndex = hash.indexOf("?");
+  const params = qIndex === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qIndex));
+  const activeCategory = params.get("category") || "";
+
+  const allFoods = (await db.getAll("foods")).sort((a, b) => a.name.localeCompare(b.name));
+  const counts = Object.fromEntries(FOOD_CATEGORIES.map(([key]) => [key, allFoods.filter((f) => (f.category || "other") === key).length]));
+  const foods = activeCategory ? allFoods.filter((f) => (f.category || "other") === activeCategory) : allFoods;
+
+  const groups = FOOD_CATEGORIES.map(([key, label]) => ({ key, label, rows: foods.filter((f) => (f.category || "other") === key) })).filter(
+    (g) => g.rows.length
+  );
+
   view.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">Your library</p><h1>Foods</h1></div>
@@ -573,29 +718,31 @@ async function renderFoodsList() {
       </div>
     </div>
     ${
-      foods.length
-        ? `<div class="item-grid">
-            ${foods
-              .map(
-                (f, i) => `
-            <div class="item-card" style="animation-delay:${i * 30}ms">
-              <div class="item-card-top">
-                <div><div class="item-name">${esc(f.name)}</div><div class="item-sub">per ${esc(f.servingUnit)}</div></div>
-                <div class="item-kcal food">${Math.round(f.calories)}<span>kcal</span></div>
-              </div>
-              <div class="item-macros">
-                <span><i class="dot protein"></i>${f.proteinG.toFixed(1)}g</span>
-                <span><i class="dot carbs"></i>${f.carbsG.toFixed(1)}g</span>
-                <span><i class="dot fat"></i>${f.fatG.toFixed(1)}g</span>
-              </div>
-              <div class="item-actions">
-                <button data-edit-food="${f.id}">${icons.pencil} Edit</button>
-                <button class="danger" data-delete-food="${f.id}">${icons.trash} Delete</button>
-              </div>
-            </div>`
-              )
+      allFoods.length
+        ? `<div class="filter-row">
+            <a class="filter-chip ${!activeCategory ? "active" : ""}" href="#/foods">All &middot; ${allFoods.length}</a>
+            ${FOOD_CATEGORIES.filter(([key]) => counts[key])
+              .map(([key, label]) => `<a class="filter-chip ${activeCategory === key ? "active" : ""}" href="#/foods?category=${key}">${esc(label)} &middot; ${counts[key]}</a>`)
               .join("")}
           </div>`
+        : ""
+    }
+    ${
+      groups.length
+        ? groups
+            .map(
+              (group) => `
+          <div class="cat-group">
+            <div class="cat-group-head">
+              <span class="cat-group-label">${esc(group.label)}</span>
+              <span class="cat-group-count">${group.rows.length} item${group.rows.length === 1 ? "" : "s"}</span>
+            </div>
+            <div class="item-grid">${group.rows.map((f, i) => foodCardHtml(f, i)).join("")}</div>
+          </div>`
+            )
+            .join("")
+        : activeCategory
+        ? `<p class="empty">No foods in this category yet. <a href="#/foods">Show all foods</a>.</p>`
         : `<p class="empty">No foods yet. <a href="#/foods/new">Add your first one</a>.</p>`
     }
   `;
@@ -673,7 +820,16 @@ async function renderFoodSearch() {
   resultsEl.querySelectorAll("[data-add-search]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const r = results[Number(btn.dataset.addSearch)];
-      const payload = { name: r.name, servingUnit: r.servingUnit, calories: r.calories, proteinG: r.proteinG, carbsG: r.carbsG, fatG: r.fatG };
+      const payload = {
+        name: r.name,
+        servingUnit: r.servingUnit,
+        category: r.category || "other",
+        servingSizeG: r.servingSizeG ?? null,
+        calories: r.calories,
+        proteinG: r.proteinG,
+        carbsG: r.carbsG,
+        fatG: r.fatG,
+      };
       for (const k of NUTRIENT_KEYS) payload[k] = r[k] ?? 0;
       await db.add("foods", payload);
       toast(`Added "${r.name}" to your foods`);
@@ -797,6 +953,8 @@ async function handleScannedBarcode(barcode) {
     const payload = {
       name: product.name,
       servingUnit: product.servingUnit,
+      category: product.category || "other",
+      servingSizeG: product.servingSizeG ?? null,
       calories: product.calories,
       proteinG: product.proteinG,
       carbsG: product.carbsG,
@@ -826,18 +984,36 @@ async function renderFoodForm(id) {
     )
     .join("");
 
+  const sizePresets = (food && food.sizePresets) || [];
+
   view.innerHTML = `
     <div class="page-head"><div><p class="eyebrow">Food library</p><h1>${food ? "Edit" : "Add"} Food</h1></div></div>
     <div class="card form-card">
       <form id="foodForm" class="form">
         <label>Name<input type="text" id="fName" required value="${food ? esc(food.name) : ""}" placeholder="e.g. Grilled chicken breast"></label>
-        <label>Serving unit<input type="text" id="fUnit" value="${food ? esc(food.servingUnit) : "serving"}" placeholder="e.g. cup, 100g, slice"></label>
-        <label>Calories per serving<input type="number" step="0.1" min="0" id="fCalories" required value="${food ? food.calories : ""}" placeholder="0"></label>
+        <div class="form-row-2">
+          <label>Serving unit<input type="text" id="fUnit" value="${food ? esc(food.servingUnit) : "serving"}" placeholder="e.g. cup, 100g, slice"></label>
+          <label>Category
+            <select id="fCategory">
+              ${FOOD_CATEGORIES.map(([key, label]) => `<option value="${key}" ${(food ? food.category : "other") === key ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="form-row-2">
+          <label>Calories per serving<input type="number" step="0.1" min="0" id="fCalories" required value="${food ? food.calories : ""}" placeholder="0"></label>
+          <label>Serving size in grams <span class="label-hint">(optional)</span><input type="number" step="0.1" min="0" id="fServingSizeG" value="${food && food.servingSizeG ? food.servingSizeG : ""}" placeholder="e.g. 100"></label>
+        </div>
         <div class="form-row-3">
           <label>Protein (g)<input type="number" step="0.1" min="0" id="fProtein" value="${food ? food.proteinG : 0}"></label>
           <label>Carbs (g)<input type="number" step="0.1" min="0" id="fCarbs" value="${food ? food.carbsG : 0}"></label>
           <label>Fat (g)<input type="number" step="0.1" min="0" id="fFat" value="${food ? food.fatG : 0}"></label>
         </div>
+
+        <label>Quick-pick sizes <span class="label-hint">(optional &mdash; e.g. Small/Medium/Large)</span></label>
+        <div class="size-preset-list" id="sizePresetList">
+          ${sizePresets.map((p) => sizePresetRowHtml(p.label, p.grams)).join("")}
+        </div>
+        <a class="btn" id="addSizePreset">${icons.plus} Add size</a>
 
         <details class="nutrient-details">
           <summary>Vitamins &amp; minerals (optional)</summary>
@@ -851,11 +1027,24 @@ async function renderFoodForm(id) {
       </form>
     </div>
   `;
+
+  document.getElementById("addSizePreset").addEventListener("click", () => {
+    document.getElementById("sizePresetList").insertAdjacentHTML("beforeend", sizePresetRowHtml("", ""));
+  });
+  document.getElementById("sizePresetList").addEventListener("click", (e) => {
+    const btn = e.target.closest(".remove-size-preset");
+    if (btn) btn.closest(".size-preset-row").remove();
+  });
+
   document.getElementById("foodForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const servingSizeG = parseFloat(document.getElementById("fServingSizeG").value);
     const payload = {
       name: document.getElementById("fName").value.trim(),
       servingUnit: document.getElementById("fUnit").value.trim() || "serving",
+      category: document.getElementById("fCategory").value || "other",
+      servingSizeG: Number.isFinite(servingSizeG) && servingSizeG > 0 ? servingSizeG : null,
+      sizePresets: readSizePresetRows(),
       calories: parseFloat(document.getElementById("fCalories").value) || 0,
       proteinG: parseFloat(document.getElementById("fProtein").value) || 0,
       carbsG: parseFloat(document.getElementById("fCarbs").value) || 0,
@@ -871,6 +1060,26 @@ async function renderFoodForm(id) {
     toast("Food saved");
     location.hash = "#/foods";
   });
+}
+
+function sizePresetRowHtml(label, grams) {
+  return `
+    <div class="size-preset-row">
+      <input type="text" class="sizePresetLabel" value="${esc(label)}" placeholder="e.g. Medium">
+      <input type="number" step="0.1" min="0" class="sizePresetGrams" value="${grams}" placeholder="grams">
+      <span class="unit-suffix">g</span>
+      <button type="button" class="icon-btn danger remove-size-preset">${icons.trash}</button>
+    </div>`;
+}
+
+function readSizePresetRows() {
+  const presets = [];
+  document.querySelectorAll("#sizePresetList .size-preset-row").forEach((row) => {
+    const label = row.querySelector(".sizePresetLabel").value.trim();
+    const grams = parseFloat(row.querySelector(".sizePresetGrams").value);
+    if (label && Number.isFinite(grams) && grams > 0) presets.push({ label, grams });
+  });
+  return presets;
 }
 
 async function renderExercisesList() {
@@ -1355,7 +1564,7 @@ async function renderRecipeForm(id) {
 
 const routes = [
   { pattern: /^#\/(\?.*)?$/, tab: "dashboard", title: "Dashboard", render: renderDashboard },
-  { pattern: /^#\/foods$/, tab: "foods", title: "Foods", render: renderFoodsList },
+  { pattern: /^#\/foods(\?.*)?$/, tab: "foods", title: "Foods", render: renderFoodsList },
   { pattern: /^#\/foods\/new$/, tab: "foods", title: "Add Food", render: () => renderFoodForm(null) },
   { pattern: /^#\/foods\/search(\?.*)?$/, tab: "foods", title: "Search Online", render: renderFoodSearch },
   { pattern: /^#\/foods\/scan$/, tab: "foods", title: "Scan Barcode", render: renderBarcodeScanner },

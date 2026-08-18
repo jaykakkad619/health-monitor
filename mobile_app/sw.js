@@ -1,4 +1,4 @@
-const CACHE_NAME = "health-monitor-v10";
+const CACHE_NAME = "health-monitor-v11";
 const SCOPE = self.registration.scope;
 
 const PRECACHE_URLS = [

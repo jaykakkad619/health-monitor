@@ -15,7 +15,11 @@
   --coral: #ff6b6b;
   --coral-dim: rgba(255, 107, 107, 0.14);
   --amber: #ffd166;
+  --amber-dim: rgba(255, 209, 102, 0.14);
   --fat-clr: #f2794a;
+  --fat-clr-dim: rgba(242, 121, 74, 0.14);
+  --violet: #b083ff;
+  --violet-dim: rgba(176, 131, 255, 0.14);
 
   --danger: #e5484d;
   --radius: 18px;
@@ -549,6 +553,7 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 .quick-add select { flex: 1; min-width: 0; }
 .quick-add input[type="number"] { width: 62px; flex-shrink: 0; }
 .quick-add select.meal-select { flex: 0 0 auto; width: 108px; }
+.quick-add select.size-select { flex: 1 1 140px; min-width: 120px; }
 
 .quick-add button {
   background: var(--lime);
@@ -601,6 +606,29 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 .log-item .icon-btn { width: 30px; height: 30px; }
 
 .empty { color: var(--muted-2); font-size: 0.85rem; font-style: italic; padding: 0.6rem 0; }
+
+/* Category filter chips + groups (foods library) */
+
+.filter-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.3rem; }
+
+.filter-chip {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.filter-chip:hover { color: var(--text); }
+.filter-chip.active { background: var(--lime); color: #0a0e0c; border-color: var(--lime); }
+
+.cat-group { margin-bottom: 1.5rem; }
+.cat-group:last-child { margin-bottom: 0; }
+.cat-group-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.7rem; }
+.cat-group-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 700; }
+.cat-group-count { font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted-2); }
 
 /* Item grid (foods / exercises libraries) */
 
@@ -692,8 +720,17 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
   width: 100%;
 }
 
+.form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
 .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.8rem; }
 .form-actions { display: flex; gap: 0.6rem; margin-top: 0.4rem; }
+
+.label-hint { text-transform: none; letter-spacing: normal; font-weight: 400; color: var(--muted-2); }
+
+.size-preset-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.6rem; }
+.size-preset-row { display: flex; gap: 0.5rem; align-items: center; }
+.size-preset-row input[type="text"] { flex: 1.4; min-width: 0; }
+.size-preset-row input[type="number"] { width: 90px; flex-shrink: 0; }
+.size-preset-row .unit-suffix { font-size: 0.78rem; color: var(--muted-2); flex-shrink: 0; }
 
 .suggestion-box {
   background: var(--lime-dim);

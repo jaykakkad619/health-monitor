@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -39,10 +40,18 @@ def _migrate(conn):
     for key in NUTRIENT_KEYS:
         if key not in existing:
             conn.execute(f"ALTER TABLE foods ADD COLUMN {key} REAL NOT NULL DEFAULT 0")
+    if "category" not in existing:
+        conn.execute("ALTER TABLE foods ADD COLUMN category TEXT NOT NULL DEFAULT 'other'")
+    if "serving_size_g" not in existing:
+        conn.execute("ALTER TABLE foods ADD COLUMN serving_size_g REAL")
+    if "size_presets" not in existing:
+        conn.execute("ALTER TABLE foods ADD COLUMN size_presets TEXT")
 
     food_log_cols = {row[1] for row in conn.execute("PRAGMA table_info(food_logs)")}
     if "meal" not in food_log_cols:
         conn.execute("ALTER TABLE food_logs ADD COLUMN meal TEXT NOT NULL DEFAULT 'other'")
+    if "grams" not in food_log_cols:
+        conn.execute("ALTER TABLE food_logs ADD COLUMN grams REAL")
 
     conn.commit()
 
@@ -50,10 +59,14 @@ def _migrate(conn):
 def _seed(conn):
     """Load the starter food/exercise library into an empty database only."""
     if conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] == 0:
-        cols = ["name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+        cols = ["name", "serving_unit", "category", "serving_size_g", "size_presets", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
         placeholders = ", ".join("?" for _ in cols)
         for f in SEED_FOODS:
-            values = [f["name"], f["serving_unit"], f["calories"], f["protein_g"], f["carbs_g"], f["fat_g"]]
+            size_presets = json.dumps(f["size_presets"]) if f.get("size_presets") else None
+            values = [
+                f["name"], f["serving_unit"], f.get("category", "other"), f.get("serving_size_g"), size_presets,
+                f["calories"], f["protein_g"], f["carbs_g"], f["fat_g"],
+            ]
             values += [f[k] for k in NUTRIENT_KEYS]
             conn.execute(f"INSERT INTO foods ({', '.join(cols)}) VALUES ({placeholders})", values)
 

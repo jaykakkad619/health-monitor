@@ -14,32 +14,52 @@
     </div>
   </div>
 
-  {% if foods %}
-  <div class="item-grid">
-    {% for f in foods %}
-    <div class="item-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
-      <div class="item-card-top">
-        <div>
-          <div class="item-name">{{ f.name }}</div>
-          <div class="item-sub">per {{ f.serving_unit }}</div>
+  <div class="filter-row">
+    <a class="filter-chip {{ 'active' if not active_category else '' }}" href="{{ url_for('foods') }}">All &middot; {{ total_count }}</a>
+    {% for key, label in categories %}
+      {% if category_counts[key] %}
+        <a class="filter-chip {{ 'active' if active_category == key else '' }}" href="{{ url_for('foods', category=key) }}">{{ label }} &middot; {{ category_counts[key] }}</a>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if groups %}
+    {% for group in groups %}
+    <div class="cat-group">
+      <div class="cat-group-head">
+        <span class="cat-group-label">{{ group.label }}</span>
+        <span class="cat-group-count">{{ group.rows|length }} item{{ '' if group.rows|length == 1 else 's' }}</span>
+      </div>
+      <div class="item-grid">
+        {% for f in group.rows %}
+        <div class="item-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
+          <div class="item-card-top">
+            <div>
+              <div class="item-name">{{ f.name }}</div>
+              <div class="item-sub">per {{ f.serving_unit }}</div>
+            </div>
+            <div class="item-kcal food">{{ "%.0f"|format(f.calories) }}<span>kcal</span></div>
+          </div>
+          <div class="item-macros">
+            <span><i class="dot protein"></i>{{ "%.1f"|format(f.protein_g) }}g</span>
+            <span><i class="dot carbs"></i>{{ "%.1f"|format(f.carbs_g) }}g</span>
+            <span><i class="dot fat"></i>{{ "%.1f"|format(f.fat_g) }}g</span>
+          </div>
+          <div class="item-actions">
+            <a href="{{ url_for('edit_food', food_id=f.id) }}">{{ icons.pencil() }} Edit</a>
+            <form method="post" action="{{ url_for('delete_food', food_id=f.id) }}" onsubmit="return confirm('Delete {{ f.name }}? This also removes its log entries.');">
+              <button type="submit">{{ icons.trash() }} Delete</button>
+            </form>
+          </div>
         </div>
-        <div class="item-kcal food">{{ "%.0f"|format(f.calories) }}<span>kcal</span></div>
-      </div>
-      <div class="item-macros">
-        <span><i class="dot protein"></i>{{ "%.1f"|format(f.protein_g) }}g</span>
-        <span><i class="dot carbs"></i>{{ "%.1f"|format(f.carbs_g) }}g</span>
-        <span><i class="dot fat"></i>{{ "%.1f"|format(f.fat_g) }}g</span>
-      </div>
-      <div class="item-actions">
-        <a href="{{ url_for('edit_food', food_id=f.id) }}">{{ icons.pencil() }} Edit</a>
-        <form method="post" action="{{ url_for('delete_food', food_id=f.id) }}" onsubmit="return confirm('Delete {{ f.name }}? This also removes its log entries.');">
-          <button type="submit">{{ icons.trash() }} Delete</button>
-        </form>
+        {% endfor %}
       </div>
     </div>
     {% endfor %}
-  </div>
   {% else %}
-  <p class="empty">No foods yet. <a href="{{ url_for('new_food') }}">Add your first one</a>.</p>
+  <p class="empty">
+    {% if active_category %}No foods in this category yet. <a href="{{ url_for('foods') }}">Show all foods</a>.
+    {% else %}No foods yet. <a href="{{ url_for('new_food') }}">Add your first one</a>.{% endif %}
+  </p>
   {% endif %}
 {% endblock %}

@@ -48,6 +48,19 @@ MEALS = [
 ]
 MEAL_LABELS = dict(MEALS)
 
+FOOD_CATEGORIES = [
+    ("fruits", "Fruits"),
+    ("exotic_fruits", "Exotic Fruits"),
+    ("vegetables", "Vegetables"),
+    ("grains", "Grains"),
+    ("protein", "Protein"),
+    ("dairy", "Dairy"),
+    ("snacks", "Snacks"),
+    ("beverages", "Beverages"),
+    ("other", "Other"),
+]
+CATEGORY_LABELS = dict(FOOD_CATEGORIES)
+
 
 def guess_meal():
     hour = datetime.now().hour
@@ -66,7 +79,7 @@ def day_totals(log_date):
     nutrient_select = ",\n               ".join(f"f.{k} * fl.servings AS {k}" for k in NUTRIENT_KEYS)
     food_rows = conn.execute(
         f"""
-        SELECT fl.id, fl.meal, f.name, f.serving_unit, fl.servings,
+        SELECT fl.id, fl.meal, f.name, f.serving_unit, fl.servings, fl.grams,
                f.calories * fl.servings AS calories,
                f.protein_g * fl.servings AS protein_g,
                f.carbs_g * fl.servings AS carbs_g,
@@ -176,12 +189,23 @@ def dashboard():
 def log_food():
     log_date = request.form["log_date"]
     food_id = request.form["food_id"]
-    servings = request.form["servings"]
     meal = request.form.get("meal") or "other"
+    grams = request.form.get("grams")
     conn = db.get_db()
+
+    if grams:
+        food = conn.execute("SELECT serving_size_g FROM foods WHERE id = ?", (food_id,)).fetchone()
+        if not food or not food["serving_size_g"]:
+            flash("This food doesn't have a serving size in grams yet — log it by quantity, or add one from its Edit page.")
+            return redirect(url_for("dashboard", date=log_date))
+        servings = float(grams) / food["serving_size_g"]
+    else:
+        servings = request.form["servings"]
+        grams = None
+
     conn.execute(
-        "INSERT INTO food_logs (log_date, food_id, servings, meal) VALUES (?, ?, ?, ?)",
-        (log_date, food_id, servings, meal),
+        "INSERT INTO food_logs (log_date, food_id, servings, grams, meal) VALUES (?, ?, ?, ?, ?)",
+        (log_date, food_id, servings, grams, meal),
     )
     conn.commit()
     flash("Food logged.")
@@ -224,13 +248,62 @@ def delete_exercise_log(log_id):
 @app.route("/foods")
 def foods():
     rows = db.get_db().execute("SELECT * FROM foods ORDER BY name").fetchall()
-    return render_template("foods.html", foods=rows)
+    active_category = request.args.get("category") or ""
+
+    counts = {}
+    for key, label in FOOD_CATEGORIES:
+        counts[key] = sum(1 for r in rows if (r["category"] or "other") == key)
+
+    if active_category:
+        rows = [r for r in rows if (r["category"] or "other") == active_category]
+
+    groups = []
+    for key, label in FOOD_CATEGORIES:
+        group_rows = [r for r in rows if (r["category"] or "other") == key]
+        if group_rows:
+            groups.append({"key": key, "label": label, "rows": group_rows})
+
+    return render_template(
+        "foods.html",
+        foods=rows,
+        groups=groups,
+        categories=FOOD_CATEGORIES,
+        category_counts=counts,
+        active_category=active_category,
+        total_count=len(db.get_db().execute("SELECT id FROM foods").fetchall()),
+    )
+
+
+def _size_presets_from_form():
+    """Parallel 'size_label'/'size_grams' fields (like a recipe's ingredient rows) -> JSON or None."""
+    labels = request.form.getlist("size_label")
+    grams = request.form.getlist("size_grams")
+    presets = []
+    for label, grams_str in zip(labels, grams):
+        label = label.strip()
+        if not label or not grams_str:
+            continue
+        try:
+            presets.append({"label": label, "grams": float(grams_str)})
+        except ValueError:
+            continue
+    return json.dumps(presets) if presets else None
+
+
+def parse_size_presets(raw):
+    try:
+        return json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
 
 
 def _food_form_values():
     values = [
         request.form["name"],
         request.form.get("serving_unit") or "serving",
+        request.form.get("category") or "other",
+        request.form.get("serving_size_g") or None,
+        _size_presets_from_form(),
         request.form["calories"],
         request.form.get("protein_g") or 0,
         request.form.get("carbs_g") or 0,
@@ -240,7 +313,7 @@ def _food_form_values():
     return values
 
 
-_FOOD_COLUMNS = ["name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+_FOOD_COLUMNS = ["name", "serving_unit", "category", "serving_size_g", "size_presets", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
 
 
 @app.route("/foods/new", methods=["GET", "POST"])
@@ -255,7 +328,7 @@ def new_food():
         conn.commit()
         flash("Food added.")
         return redirect(url_for("foods"))
-    return render_template("food_form.html", food=None, nutrients=NUTRIENTS)
+    return render_template("food_form.html", food=None, nutrients=NUTRIENTS, categories=FOOD_CATEGORIES, size_presets=[])
 
 
 @app.route("/foods/<int:food_id>/edit", methods=["GET", "POST"])
@@ -271,7 +344,13 @@ def edit_food(food_id):
         flash("Food updated.")
         return redirect(url_for("foods"))
     food = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
-    return render_template("food_form.html", food=food, nutrients=NUTRIENTS)
+    return render_template(
+        "food_form.html",
+        food=food,
+        nutrients=NUTRIENTS,
+        categories=FOOD_CATEGORIES,
+        size_presets=parse_size_presets(food["size_presets"]),
+    )
 
 
 @app.route("/foods/<int:food_id>/delete", methods=["POST"])
@@ -716,6 +795,28 @@ def _off_request(url):
         return json.load(resp)
 
 
+# Keyword -> our category, checked against OFF's categories_tags/food_groups_tags.
+# Order matters: more specific matches (exotic fruit) must be checked before broader ones (fruit).
+OFF_CATEGORY_KEYWORDS = [
+    ("exotic_fruits", ["exotic-fruit"]),
+    ("fruits", ["fruit"]),
+    ("vegetables", ["vegetable", "legume"]),
+    ("dairy", ["dairy", "cheese", "yogurt", "yoghurt", "milk"]),
+    ("protein", ["meat", "poultry", "fish", "seafood", "egg"]),
+    ("grains", ["cereal", "bread", "pasta", "rice", "grain"]),
+    ("beverages", ["beverage", "drink", "juice"]),
+    ("snacks", ["snack", "chocolate", "candy", "biscuit", "cookie"]),
+]
+
+
+def guess_category_from_off(product):
+    text = " ".join(product.get("categories_tags", []) + product.get("food_groups_tags", [])).lower()
+    for key, keywords in OFF_CATEGORY_KEYWORDS:
+        if any(kw in text for kw in keywords):
+            return key
+    return "other"
+
+
 def off_product_to_food(p):
     n = p.get("nutriments", {})
     has_serving = n.get("energy-kcal_serving") is not None
@@ -733,10 +834,20 @@ def off_product_to_food(p):
     if isinstance(brands, list):
         brands = ", ".join(brands)
 
+    if has_serving:
+        try:
+            serving_size_g = float(p["serving_quantity"]) if p.get("serving_quantity") else None
+        except (TypeError, ValueError):
+            serving_size_g = None
+    else:
+        serving_size_g = 100.0
+
     food = {
         "name": (p.get("product_name") or p.get("generic_name") or "Unnamed product").strip(),
         "brand": brands.strip(),
         "serving_unit": serving_unit,
+        "category": guess_category_from_off(p),
+        "serving_size_g": serving_size_g,
         "calories": raw("energy-kcal"),
     }
     for our_key, off_key, mult in OFF_FIELD_MAP:
@@ -784,10 +895,12 @@ def search_foods():
 @app.route("/foods/search/add", methods=["POST"])
 def add_searched_food():
     payload = json.loads(request.form["food_json"])
-    cols = ["name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
+    cols = ["name", "serving_unit", "category", "serving_size_g", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS
     values = [
         payload.get("name") or "Unnamed product",
         payload.get("serving_unit") or "100g",
+        payload.get("category") or "other",
+        payload.get("serving_size_g") or None,
         payload.get("calories") or 0,
         payload.get("protein_g") or 0,
         payload.get("carbs_g") or 0,
