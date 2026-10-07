@@ -1,6 +1,8 @@
 // Reference daily values (%DV) are the FDA's generic adult reference values
 // used on US nutrition labels (2016/2020 update) — not personalized to any
-// individual's age, sex, or activity level.
+// individual's age, sex, or activity level. Caffeine has no DV; its 400 mg
+// "reference" is the FDA's stated safe daily upper limit for healthy adults,
+// so its percentage reads as share of that limit rather than a target.
 
 export const NUTRIENTS = [
   { key: "fiberG", label: "Fiber", unit: "g", dv: 28, group: "Other Nutrients" },
@@ -8,6 +10,7 @@ export const NUTRIENTS = [
   { key: "satFatG", label: "Saturated Fat", unit: "g", dv: 20, group: "Other Nutrients" },
   { key: "cholesterolMg", label: "Cholesterol", unit: "mg", dv: 300, group: "Other Nutrients" },
   { key: "sodiumMg", label: "Sodium", unit: "mg", dv: 2300, group: "Other Nutrients" },
+  { key: "caffeineMg", label: "Caffeine", unit: "mg", dv: 400, group: "Other Nutrients" },
   { key: "potassiumMg", label: "Potassium", unit: "mg", dv: 4700, group: "Minerals" },
   { key: "calciumMg", label: "Calcium", unit: "mg", dv: 1300, group: "Minerals" },
   { key: "ironMg", label: "Iron", unit: "mg", dv: 18, group: "Minerals" },

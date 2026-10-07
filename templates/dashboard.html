@@ -57,6 +57,13 @@
       {% else %}
         <a class="stat-goal-empty" href="{{ url_for('settings') }}">{{ icons.plus() }} Set a daily goal</a>
       {% endif %}
+      <div class="stat">
+        <span class="stat-icon {{ 'over' if caffeine > caffeine_limit else 'caffeine' }}">{{ icons.cup() }}</span>
+        <div>
+          <span class="stat-value">{{ "%.0f"|format(caffeine) }}<small> mg</small></span>
+          <span class="stat-label">caffeine &middot; {{ 'over' if caffeine > caffeine_limit else 'of' }} {{ caffeine_limit }} mg limit</span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -83,23 +90,29 @@
       <div class="log-card-head"><h2>{{ icons.fork() }} Food Log</h2></div>
       <form method="post" action="{{ url_for('log_food') }}" class="quick-add" id="quickAddFood">
         <input type="hidden" name="log_date" value="{{ log_date }}">
+        <input type="search" id="foodFilter" class="food-filter" placeholder="Search {{ foods|length }} foods&hellip; e.g. chai, paneer, chia" autocomplete="off">
         <select name="food_id" id="foodSelect" required>
           <option value="" disabled selected>Select food&hellip;</option>
-          {% for f in foods %}
-            <option value="{{ f.id }}" data-serving-size-g="{{ f.serving_size_g or '' }}" data-size-presets='{{ f.size_presets or "[]" }}'>{{ f.name }} &middot; {{ "%.0f"|format(f.calories) }} kcal</option>
+          {% for group in food_groups %}
+            <optgroup label="{{ group.label }}">
+              {% for f in group.rows %}
+                <option value="{{ f.id }}" data-serving-size-g="{{ f.serving_size_g or '' }}" data-size-presets='{{ f.size_presets or "[]" }}'>{{ f.name }} &middot; {{ "%.0f"|format(f.calories) }} kcal / {{ f.serving_unit }}</option>
+              {% endfor %}
+            </optgroup>
           {% endfor %}
         </select>
         <input type="number" step="0.1" min="0" name="servings" id="foodServings" placeholder="Qty" value="1" required>
         <select id="foodSizeSelect" class="size-select" style="display:none">
           <option value="">Custom grams&hellip;</option>
         </select>
-        <input type="number" step="1" min="0" name="grams" id="foodGrams" placeholder="grams" style="display:none">
+        <input type="number" step="1" min="0" name="grams" id="foodGrams" placeholder="g / ml" style="display:none">
         <select name="meal" class="meal-select">
           {% for key, label in meals %}
             <option value="{{ key }}" {{ 'selected' if key == guessed_meal else '' }}>{{ label }}</option>
           {% endfor %}
         </select>
         <button type="submit">{{ icons.plus() }}</button>
+        <div class="log-preview" id="foodPreview" hidden></div>
       </form>
       {% if not foods %}
         <p class="empty">No foods yet. <a href="{{ url_for('new_food') }}">Add one</a>.</p>
@@ -117,6 +130,7 @@
                 <span class="log-item-name">{{ row.name }}</span>
                 <span class="log-item-meta">
                   {% if row.grams %}{{ "%.0f"|format(row.grams) }}g{% else %}{{ row.servings }} &times; {{ row.serving_unit }}{% endif %}
+                  &middot; P {{ "%.0f"|format(row.protein_g) }}g &middot; C {{ "%.0f"|format(row.carbs_g) }}g &middot; F {{ "%.0f"|format(row.fat_g) }}g{% if row.caffeine_mg %} &middot; {{ "%.0f"|format(row.caffeine_mg) }}mg caffeine{% endif %}
                 </span>
               </div>
               <span class="log-item-kcal">{{ "%.0f"|format(row.calories) }}</span>
@@ -197,10 +211,75 @@
 
   <script>
     (function () {
+      const FOODS = {{ foods_nutrition|tojson }};
+      const NUTRIENTS = {{ nutrients|tojson }};
+      // Limits rather than targets: never listed as a "good source of".
+      const LIMIT_KEYS = ['sat_fat_g', 'cholesterol_mg', 'sodium_mg', 'caffeine_mg'];
+
       const foodSelect = document.getElementById('foodSelect');
+      const foodFilter = document.getElementById('foodFilter');
       const qtyInput = document.getElementById('foodServings');
       const sizeSelect = document.getElementById('foodSizeSelect');
       const gramsInput = document.getElementById('foodGrams');
+      const preview = document.getElementById('foodPreview');
+
+      const fmt = (v) => (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
+
+      // How many servings the current inputs amount to (grams are converted
+      // via the food's serving size, exactly as the server does on submit).
+      function currentFactor(food) {
+        if (gramsInput.style.display !== 'none') {
+          const g = parseFloat(gramsInput.value);
+          return food.serving_size_g && g > 0 ? g / food.serving_size_g : 0;
+        }
+        return parseFloat(qtyInput.value) || 0;
+      }
+
+      function updatePreview() {
+        const food = FOODS[foodSelect.value];
+        const factor = food ? currentFactor(food) : 0;
+        if (!food || !factor) { preview.hidden = true; return; }
+        const v = (k) => (food[k] || 0) * factor;
+        const extras = [`Fiber ${fmt(v('fiber_g'))}g`, `Sugar ${fmt(v('sugar_g'))}g`, `Sodium ${fmt(v('sodium_mg'))}mg`];
+        if (v('caffeine_mg') > 0) extras.push(`<b class="caffeine-text">Caffeine ${fmt(v('caffeine_mg'))}mg</b>`);
+        const rich = NUTRIENTS
+          .filter((n) => n.dv && !LIMIT_KEYS.includes(n.key))
+          .map((n) => ({ label: n.label, pct: (v(n.key) / n.dv) * 100 }))
+          .filter((n) => n.pct >= 10)
+          .sort((a, b) => b.pct - a.pct)
+          .slice(0, 4);
+        preview.innerHTML = `
+          <div class="preview-main"><b>${fmt(v('calories'))} kcal</b> &middot; P ${fmt(v('protein_g'))}g &middot; C ${fmt(v('carbs_g'))}g &middot; F ${fmt(v('fat_g'))}g</div>
+          <div class="preview-sub">${extras.join(' &middot; ')}</div>
+          ${rich.length ? `<div class="preview-sub">Good source of: ${rich.map((n) => `${n.label} ${Math.round(n.pct)}%`).join(' &middot; ')}</div>` : ''}`;
+        preview.hidden = false;
+      }
+
+      // Type-to-filter: rebuild the select from the original option nodes,
+      // since hiding <option>s is ignored by iOS Safari.
+      const allGroups = Array.from(foodSelect.querySelectorAll('optgroup')).map((g) => ({ label: g.label, options: Array.from(g.children) }));
+      const placeholder = foodSelect.options[0];
+      foodFilter.addEventListener('input', () => {
+        const q = foodFilter.value.trim().toLowerCase();
+        const keep = foodSelect.value;
+        foodSelect.replaceChildren(placeholder);
+        let firstMatch = null;
+        for (const g of allGroups) {
+          const matches = g.options.filter((o) => !q || o.textContent.toLowerCase().includes(q) || g.label.toLowerCase().includes(q));
+          if (!matches.length) continue;
+          const og = document.createElement('optgroup');
+          og.label = g.label;
+          og.append(...matches);
+          foodSelect.appendChild(og);
+          firstMatch = firstMatch || matches[0];
+        }
+        if (q && firstMatch && !(keep && foodSelect.querySelector(`option[value="${keep}"]`))) {
+          foodSelect.value = firstMatch.value;
+          updateFoodInputs();
+        } else {
+          foodSelect.value = keep;
+        }
+      });
 
       function updateFoodInputs() {
         const opt = foodSelect.selectedOptions[0];
@@ -212,7 +291,7 @@
         for (const p of presets) {
           const o = document.createElement('option');
           o.value = p.grams;
-          o.textContent = `${p.label} (${p.grams}g)`;
+          o.textContent = /\d/.test(p.label) ? p.label : `${p.label} (${p.grams}g)`;
           sizeSelect.appendChild(o);
         }
 
@@ -236,11 +315,18 @@
           qtyInput.required = true;
           gramsInput.value = '';
         }
+        updatePreview();
       }
 
       sizeSelect.addEventListener('change', () => {
         if (sizeSelect.value) gramsInput.value = sizeSelect.value;
+        updatePreview();
       });
+      gramsInput.addEventListener('input', () => {
+        if (sizeSelect.value && gramsInput.value !== sizeSelect.value) sizeSelect.value = '';
+        updatePreview();
+      });
+      qtyInput.addEventListener('input', updatePreview);
       foodSelect.addEventListener('change', updateFoodInputs);
     })();
   </script>

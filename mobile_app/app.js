@@ -1,7 +1,7 @@
 import { db } from "./idb.js";
 import { icons } from "./icons.js";
 import { NUTRIENTS, NUTRIENT_KEYS } from "./nutrients.js";
-import { SEED_EXERCISES, SEED_FOODS } from "./seed_data.js";
+import { SEED_EXERCISES, SEED_FOODS, SEED_FOODS_V2, SEED_RECATEGORIZE, SEED_VERSION } from "./seed_data.js";
 
 const view = document.getElementById("view");
 const pageTitle = document.getElementById("pageTitle");
@@ -32,6 +32,7 @@ const OFF_FIELD_MAP = [
   ["vitaminB6Mg", "vitamin-b6", 1000],
   ["vitaminB12Mcg", "vitamin-b12", 1000000],
   ["folateMcg", "folates", 1000000],
+  ["caffeineMg", "caffeine", 1000],
 ];
 
 function offProductToFood(p) {
@@ -164,15 +165,28 @@ const FOOD_CATEGORIES = [
   ["grains", "Grains"],
   ["protein", "Protein"],
   ["dairy", "Dairy"],
-  ["snacks", "Snacks"],
-  ["beverages", "Beverages"],
+  ["nuts_seeds", "Nuts & Seeds"],
+  ["fats_oils", "Ghee, Butter & Oils"],
+  ["protein_bars", "Protein Bars"],
+  ["snacks", "Snacks & Sweets"],
+  ["coffee_tea", "Coffee & Tea"],
+  ["beverages", "Drinks"],
   ["other", "Other"],
 ];
 const CATEGORY_LABELS = Object.fromEntries(FOOD_CATEGORIES);
 
+// FDA: up to 400 mg/day is generally safe for healthy adults (lower in pregnancy).
+const CAFFEINE_LIMIT_MG = 400;
+// Limits rather than targets: never listed as a "good source of" in the log preview.
+const LIMIT_NUTRIENT_KEYS = ["satFatG", "cholesterolMg", "sodiumMg", "caffeineMg"];
+
 // Keyword -> our category, checked against OFF's categories_tags/food_groups_tags.
 // Order matters: more specific matches (exotic fruit) must be checked before broader ones (fruit).
 const OFF_CATEGORY_KEYWORDS = [
+  ["protein_bars", ["protein-bar"]],
+  ["coffee_tea", ["coffee", "en:teas", "tea-based", "iced-teas", "green-teas", "herbal-teas"]],
+  ["nuts_seeds", ["en:nuts", "en:seeds", "nut-butters", "peanut-butters"]],
+  ["fats_oils", ["en:fats", "en:vegetable-oils", "en:ghee", "en:butters"]],
   ["exotic_fruits", ["exotic-fruit"]],
   ["fruits", ["fruit"]],
   ["vegetables", ["vegetable", "legume"]],
@@ -395,6 +409,12 @@ async function renderDashboard() {
   const remaining = goal ? goal - totals.net : null;
   const prev = addDays(dateStr, -1);
   const next = addDays(dateStr, 1);
+  const caffeine = totals.nutrients.caffeineMg.total;
+  const foodsById = new Map(totals.foods.map((f) => [f.id, f]));
+  const foodGroups = FOOD_CATEGORIES.map(([key, label]) => ({
+    label,
+    rows: totals.foods.filter((f) => (f.category || "other") === key).sort((a, b) => a.name.localeCompare(b.name)),
+  })).filter((g) => g.rows.length);
 
   view.innerHTML = `
     <div class="page-head">
@@ -435,6 +455,10 @@ async function renderDashboard() {
               </div>`
             : `<a class="stat-goal-empty" href="#/settings">${icons.plus} Set a daily goal</a>`
         }
+        <div class="stat">
+          <span class="stat-icon ${caffeine > CAFFEINE_LIMIT_MG ? "over" : "caffeine"}">${icons.cup}</span>
+          <div><span class="stat-value">${Math.round(caffeine)}<small> mg</small></span><span class="stat-label">caffeine &middot; ${caffeine > CAFFEINE_LIMIT_MG ? "over" : "of"} ${CAFFEINE_LIMIT_MG} mg limit</span></div>
+        </div>
       </div>
     </section>
 
@@ -459,12 +483,17 @@ async function renderDashboard() {
     <section class="card log-card food-theme">
       <div class="log-card-head"><h2>${icons.fork} Food Log</h2></div>
       <form id="quickAddFood" class="quick-add">
+        <input type="search" id="foodFilter" class="food-filter" placeholder="Search ${totals.foods.length} foods&hellip; e.g. chai, paneer, chia" autocomplete="off">
         <select id="foodSelect" required>
           <option value="" disabled selected>Select food&hellip;</option>
-          ${totals.foods
+          ${foodGroups
             .map(
-              (f) =>
-                `<option value="${f.id}" data-serving-size-g="${f.servingSizeG || ""}" data-size-presets='${esc(JSON.stringify(f.sizePresets || []))}'>${esc(f.name)} &middot; ${Math.round(f.calories)} kcal</option>`
+              (g) => `<optgroup label="${esc(g.label)}">${g.rows
+                .map(
+                  (f) =>
+                    `<option value="${f.id}" data-serving-size-g="${f.servingSizeG || ""}" data-size-presets='${esc(JSON.stringify(f.sizePresets || []))}'>${esc(f.name)} &middot; ${Math.round(f.calories)} kcal / ${esc(f.servingUnit)}</option>`
+                )
+                .join("")}</optgroup>`
             )
             .join("")}
         </select>
@@ -472,11 +501,12 @@ async function renderDashboard() {
         <select id="foodSizeSelect" class="size-select" style="display:none">
           <option value="">Custom grams&hellip;</option>
         </select>
-        <input type="number" step="1" min="0" id="foodGrams" placeholder="grams" style="display:none">
+        <input type="number" step="1" min="0" id="foodGrams" placeholder="g / ml" style="display:none">
         <select id="foodMeal" class="meal-select">
           ${MEALS.map(([key, label]) => `<option value="${key}" ${key === guessMeal() ? "selected" : ""}>${label}</option>`).join("")}
         </select>
         <button type="submit">${icons.plus}</button>
+        <div class="log-preview" id="foodPreview" hidden></div>
       </form>
       ${!totals.foods.length ? `<p class="empty">No foods yet. <a href="#/foods/new">Add one</a>.</p>` : ""}
       ${totals.meals
@@ -494,7 +524,7 @@ async function renderDashboard() {
                     .map(
                       (row, i) => `
             <li class="log-item" style="animation-delay:${i * 40}ms">
-              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.grams ? `${Math.round(row.grams)}g` : `${row.servings} &times; ${esc(row.servingUnit)}`}</span></div>
+              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.grams ? `${Math.round(row.grams)}g` : `${row.servings} &times; ${esc(row.servingUnit)}`} &middot; P ${Math.round(row.proteinG)}g &middot; C ${Math.round(row.carbsG)}g &middot; F ${Math.round(row.fatG)}g${row.caffeineMg ? ` &middot; ${Math.round(row.caffeineMg)}mg caffeine` : ""}</span></div>
               <span class="log-item-kcal">${Math.round(row.calories)}</span>
               <button class="icon-btn danger" data-delete-food-log="${row.id}">${icons.trash}</button>
             </li>`
@@ -575,9 +605,71 @@ async function renderDashboard() {
   });
 
   const foodSelect = document.getElementById("foodSelect");
+  const foodFilter = document.getElementById("foodFilter");
   const foodQty = document.getElementById("foodServings");
   const foodSizeSelect = document.getElementById("foodSizeSelect");
   const foodGrams = document.getElementById("foodGrams");
+  const foodPreview = document.getElementById("foodPreview");
+
+  const fmt = (v) => (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
+
+  // How many servings the current inputs amount to (grams are converted via
+  // the food's serving size, exactly as the submit handler does).
+  function currentFactor(food) {
+    if (foodGrams.style.display !== "none") {
+      const g = parseFloat(foodGrams.value);
+      return food.servingSizeG && g > 0 ? g / food.servingSizeG : 0;
+    }
+    return parseFloat(foodQty.value) || 0;
+  }
+
+  function updatePreview() {
+    const food = foodsById.get(Number(foodSelect.value));
+    const factor = food ? currentFactor(food) : 0;
+    if (!food || !factor) {
+      foodPreview.hidden = true;
+      return;
+    }
+    const v = (k) => (food[k] || 0) * factor;
+    const extras = [`Fiber ${fmt(v("fiberG"))}g`, `Sugar ${fmt(v("sugarG"))}g`, `Sodium ${fmt(v("sodiumMg"))}mg`];
+    if (v("caffeineMg") > 0) extras.push(`<b class="caffeine-text">Caffeine ${fmt(v("caffeineMg"))}mg</b>`);
+    const rich = NUTRIENTS.filter((n) => n.dv && !LIMIT_NUTRIENT_KEYS.includes(n.key))
+      .map((n) => ({ label: n.label, pct: (v(n.key) / n.dv) * 100 }))
+      .filter((n) => n.pct >= 10)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 4);
+    foodPreview.innerHTML = `
+      <div class="preview-main"><b>${fmt(v("calories"))} kcal</b> &middot; P ${fmt(v("proteinG"))}g &middot; C ${fmt(v("carbsG"))}g &middot; F ${fmt(v("fatG"))}g</div>
+      <div class="preview-sub">${extras.join(" &middot; ")}</div>
+      ${rich.length ? `<div class="preview-sub">Good source of: ${rich.map((n) => `${n.label} ${Math.round(n.pct)}%`).join(" &middot; ")}</div>` : ""}`;
+    foodPreview.hidden = false;
+  }
+
+  // Type-to-filter: rebuild the select from the original option nodes,
+  // since hiding <option>s is ignored by iOS Safari.
+  const allGroups = Array.from(foodSelect.querySelectorAll("optgroup")).map((g) => ({ label: g.label, options: Array.from(g.children) }));
+  const placeholderOption = foodSelect.options[0];
+  foodFilter.addEventListener("input", () => {
+    const q = foodFilter.value.trim().toLowerCase();
+    const keep = foodSelect.value;
+    foodSelect.replaceChildren(placeholderOption);
+    let firstMatch = null;
+    for (const g of allGroups) {
+      const matches = g.options.filter((o) => !q || o.textContent.toLowerCase().includes(q) || g.label.toLowerCase().includes(q));
+      if (!matches.length) continue;
+      const og = document.createElement("optgroup");
+      og.label = g.label;
+      og.append(...matches);
+      foodSelect.appendChild(og);
+      firstMatch = firstMatch || matches[0];
+    }
+    if (q && firstMatch && !(keep && foodSelect.querySelector(`option[value="${keep}"]`))) {
+      foodSelect.value = firstMatch.value;
+      updateFoodInputs();
+    } else {
+      foodSelect.value = keep;
+    }
+  });
 
   function updateFoodInputs() {
     const opt = foodSelect.selectedOptions[0];
@@ -593,7 +685,7 @@ async function renderDashboard() {
     for (const p of presets) {
       const o = document.createElement("option");
       o.value = p.grams;
-      o.textContent = `${p.label} (${p.grams}g)`;
+      o.textContent = /\d/.test(p.label) ? p.label : `${p.label} (${p.grams}g)`;
       foodSizeSelect.appendChild(o);
     }
 
@@ -617,11 +709,18 @@ async function renderDashboard() {
       foodQty.required = true;
       foodGrams.value = "";
     }
+    updatePreview();
   }
 
   foodSizeSelect.addEventListener("change", () => {
     if (foodSizeSelect.value) foodGrams.value = foodSizeSelect.value;
+    updatePreview();
   });
+  foodGrams.addEventListener("input", () => {
+    if (foodSizeSelect.value && foodGrams.value !== foodSizeSelect.value) foodSizeSelect.value = "";
+    updatePreview();
+  });
+  foodQty.addEventListener("input", updatePreview);
   foodSelect.addEventListener("change", updateFoodInputs);
 
   document.getElementById("quickAddFood").addEventListener("submit", async (e) => {
@@ -634,7 +733,7 @@ async function renderDashboard() {
     const gramsVisible = foodGrams.style.display !== "none";
     const gramsVal = gramsVisible ? parseFloat(foodGrams.value) : NaN;
     if (Number.isFinite(gramsVal) && gramsVal > 0) {
-      const food = totals.foods.find((f) => f.id === foodId);
+      const food = foodsById.get(foodId);
       if (!food || !food.servingSizeG) {
         toast("This food doesn't have a serving size in grams — log it by quantity instead.");
         return;
@@ -1596,11 +1695,49 @@ async function router() {
   location.hash = "#/";
 }
 
-async function seedIfEmpty() {
-  const [foods, exercises] = await Promise.all([db.getAll("foods"), db.getAll("exercises")]);
-  if (foods.length === 0) {
+// Give v1 seed foods the fields v2 added, without touching anything the user set.
+async function fillSeedBlanks(foods) {
+  const seedByName = new Map(SEED_FOODS.map((f) => [f.name, f]));
+  for (const f of foods) {
+    const seed = seedByName.get(f.name);
+    let changed = false;
+    if (seed && !f.servingSizeG && seed.servingSizeG) {
+      f.servingSizeG = seed.servingSizeG;
+      changed = true;
+    }
+    if (seed && !(f.sizePresets && f.sizePresets.length) && seed.sizePresets) {
+      f.sizePresets = seed.sizePresets;
+      changed = true;
+    }
+    if (seed && !f.caffeineMg && seed.caffeineMg) {
+      f.caffeineMg = seed.caffeineMg;
+      changed = true;
+    }
+    const recat = SEED_RECATEGORIZE[f.name];
+    if (recat && f.category === recat[0]) {
+      f.category = recat[1];
+      changed = true;
+    }
+    if (changed) await db.put("foods", f);
+  }
+}
+
+// Mirrors db._seed in the Flask app: `seedVersion` records which seed batches
+// this device has received, so each is applied once and later edits or
+// deletions stick. A device from before versioning has foods but no setting,
+// which means it already has batch 1.
+async function seedLibrary() {
+  const [foods, exercises, versionRow] = await Promise.all([db.getAll("foods"), db.getAll("exercises"), db.get("settings", "seedVersion")]);
+  const version = versionRow ? Number(versionRow.value) : foods.length ? 1 : 0;
+  if (version < 1) {
     for (const f of SEED_FOODS) await db.add("foods", f);
   }
+  if (version < 2) {
+    const existing = new Set(foods.map((f) => f.name.toLowerCase()));
+    for (const f of SEED_FOODS_V2) if (!existing.has(f.name.toLowerCase())) await db.add("foods", f);
+    await fillSeedBlanks(foods);
+  }
+  if (version < SEED_VERSION) await db.put("settings", { key: "seedVersion", value: String(SEED_VERSION) });
   if (exercises.length === 0) {
     for (const e of SEED_EXERCISES) await db.add("exercises", e);
   }
@@ -1611,4 +1748,4 @@ window.addEventListener("pagehide", stopActiveScanner);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopActiveScanner();
 });
-seedIfEmpty().then(router);
+seedLibrary().then(router);

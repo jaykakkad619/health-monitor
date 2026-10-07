@@ -55,11 +55,18 @@ FOOD_CATEGORIES = [
     ("grains", "Grains"),
     ("protein", "Protein"),
     ("dairy", "Dairy"),
-    ("snacks", "Snacks"),
-    ("beverages", "Beverages"),
+    ("nuts_seeds", "Nuts & Seeds"),
+    ("fats_oils", "Ghee, Butter & Oils"),
+    ("protein_bars", "Protein Bars"),
+    ("snacks", "Snacks & Sweets"),
+    ("coffee_tea", "Coffee & Tea"),
+    ("beverages", "Drinks"),
     ("other", "Other"),
 ]
 CATEGORY_LABELS = dict(FOOD_CATEGORIES)
+
+# FDA: up to 400 mg/day is generally safe for healthy adults (lower in pregnancy).
+CAFFEINE_LIMIT_MG = 400
 
 
 def guess_meal():
@@ -159,6 +166,17 @@ def dashboard():
     conn = db.get_db()
     foods = conn.execute("SELECT * FROM foods ORDER BY name").fetchall()
     exercises = conn.execute("SELECT * FROM exercises ORDER BY name").fetchall()
+    food_groups = []
+    for key, label in FOOD_CATEGORIES:
+        rows = [f for f in foods if (f["category"] or "other") == key]
+        if rows:
+            food_groups.append({"label": label, "rows": rows})
+    # Per-serving nutrition for every food, so the log form can preview what
+    # a given weight/quantity adds before it's submitted.
+    foods_nutrition = {
+        f["id"]: {k: f[k] for k in RECIPE_NUTRITION_KEYS} | {"serving_size_g": f["serving_size_g"]}
+        for f in foods
+    }
 
     d = date.fromisoformat(log_date)
     display_date = f"{d.strftime('%A, %B')} {d.day}"
@@ -179,6 +197,11 @@ def dashboard():
         over_goal=over_goal,
         remaining=remaining,
         foods=foods,
+        food_groups=food_groups,
+        foods_nutrition=foods_nutrition,
+        nutrients=NUTRIENTS,
+        caffeine=totals["nutrients"]["caffeine_mg"]["total"],
+        caffeine_limit=CAFFEINE_LIMIT_MG,
         exercises=exercises,
         meals=MEALS,
         guessed_meal=guess_meal(),
@@ -526,9 +549,9 @@ def settings():
 
 
 EXPORT_TABLES = {
-    "foods": ["id", "name", "serving_unit", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS,
+    "foods": ["id", "name", "serving_unit", "category", "serving_size_g", "size_presets", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS,
     "exercises": ["id", "name", "unit", "calories_per_unit"],
-    "food_logs": ["id", "log_date", "food_id", "servings", "meal"],
+    "food_logs": ["id", "log_date", "food_id", "servings", "grams", "meal"],
     "exercise_logs": ["id", "log_date", "exercise_id", "quantity"],
     "weight_logs": ["id", "log_date", "weight_kg"],
     "recipes": ["id", "food_id", "name", "yields_servings"],
@@ -575,9 +598,11 @@ def import_data():
         conn.execute("DELETE FROM settings")
 
         for table, cols in EXPORT_TABLES.items():
-            placeholders = ", ".join("?" for _ in cols)
             for row in data.get(table) or []:
-                conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})", [row.get(c) for c in cols])
+                # Columns absent from an older backup fall back to their schema default.
+                present = [c for c in cols if row.get(c) is not None]
+                placeholders = ", ".join("?" for _ in present)
+                conn.execute(f"INSERT INTO {table} ({', '.join(present)}) VALUES ({placeholders})", [row[c] for c in present])
 
         for key, value in (data.get("settings") or {}).items():
             conn.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -781,6 +806,7 @@ OFF_FIELD_MAP = [
     ("vitamin_b6_mg", "vitamin-b6", 1000),
     ("vitamin_b12_mcg", "vitamin-b12", 1_000_000),
     ("folate_mcg", "folates", 1_000_000),
+    ("caffeine_mg", "caffeine", 1000),
 ]
 OFF_USER_AGENT = "HealthMonitorApp-Personal/1.0"
 
@@ -798,6 +824,10 @@ def _off_request(url):
 # Keyword -> our category, checked against OFF's categories_tags/food_groups_tags.
 # Order matters: more specific matches (exotic fruit) must be checked before broader ones (fruit).
 OFF_CATEGORY_KEYWORDS = [
+    ("protein_bars", ["protein-bar"]),
+    ("coffee_tea", ["coffee", "en:teas", "tea-based", "iced-teas", "green-teas", "herbal-teas"]),
+    ("nuts_seeds", ["en:nuts", "en:seeds", "nut-butters", "peanut-butters"]),
+    ("fats_oils", ["en:fats", "en:vegetable-oils", "en:ghee", "en:butters"]),
     ("exotic_fruits", ["exotic-fruit"]),
     ("fruits", ["fruit"]),
     ("vegetables", ["vegetable", "legume"]),

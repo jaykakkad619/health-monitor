@@ -4,6 +4,7 @@ function svg(inner) {
 
 export const icons = {
   pulse: svg('<path d="M3 12h4l2 7 4-14 2 7h6"/>'),
+  cup: svg('<path d="M4 9h13v4a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6z"/><path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H16.5"/><path d="M8 2.5c0 1.2-1 1.4-1 2.8M11.5 2.5c0 1.2-1 1.4-1 2.8"/>'),
   fork: svg(
     '<path d="M6 2v6a2 2 0 0 0 4 0V2"/><path d="M8 8v14"/><path d="M17 2c-2 1.5-2 4-2 6s1 3 2 3 2-1 2-3-0-4.5-2-6z"/><path d="M17 11v11"/>'
   ),

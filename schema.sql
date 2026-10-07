@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS foods (
     vitamin_k_mcg REAL NOT NULL DEFAULT 0,
     vitamin_b6_mg REAL NOT NULL DEFAULT 0,
     vitamin_b12_mcg REAL NOT NULL DEFAULT 0,
-    folate_mcg REAL NOT NULL DEFAULT 0
+    folate_mcg REAL NOT NULL DEFAULT 0,
+    caffeine_mg REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS exercises (

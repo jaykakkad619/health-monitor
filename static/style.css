@@ -267,7 +267,7 @@ a { color: inherit; }
 
 /* Inputs */
 
-input[type="date"], input[type="text"], input[type="number"], select {
+input[type="date"], input[type="text"], input[type="number"], input[type="search"], select {
   color-scheme: dark;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -814,3 +814,24 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 @media (max-width: 560px) {
   .history-row { grid-template-columns: 80px 1fr 70px; gap: 0.75rem; padding: 0.7rem 0.85rem; }
 }
+
+/* Caffeine stat + live log preview */
+
+.stat-icon.caffeine { color: var(--amber); background: var(--amber-dim); }
+.stat-value small { font-size: 0.7rem; color: var(--muted); font-weight: 500; }
+.caffeine-text { color: var(--amber); font-weight: 600; }
+
+/* Search and food picker each get a full row; size/qty/meal/add share the next. */
+.quick-add .food-filter, .quick-add #foodSelect { flex: 1 1 100%; }
+
+.log-preview {
+  flex: 1 1 100%;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--lime-dim);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+.log-preview[hidden] { display: none; }
+.log-preview .preview-main b { color: var(--lime); }
+.log-preview .preview-sub { color: var(--muted); font-size: 0.74rem; }

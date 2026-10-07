@@ -15,6 +15,7 @@
   --coral: #ff6b6b;
   --coral-dim: rgba(255, 107, 107, 0.16);
   --amber: #ffd166;
+  --amber-dim: rgba(255, 209, 102, 0.16);
   --fat-clr: #f2794a;
   --danger: #e5484d;
 
@@ -557,3 +558,24 @@ button.btn.primary, a.btn.primary { background: var(--lime); border-color: var(-
 }
 
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Caffeine stat + live log preview */
+
+.stat-icon.caffeine { color: var(--amber); background: var(--amber-dim); }
+.stat-value small { font-size: 0.7rem; color: var(--muted); font-weight: 500; }
+.caffeine-text { color: var(--amber); font-weight: 600; }
+
+/* Search and food picker each get a full row; size/qty/meal/add share the next. */
+.quick-add .food-filter, .quick-add #foodSelect { flex: 1 1 100%; }
+
+.log-preview {
+  flex: 1 1 100%;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--lime-dim);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+.log-preview[hidden] { display: none; }
+.log-preview .preview-main b { color: var(--lime); }
+.log-preview .preview-sub { color: var(--muted); font-size: 0.74rem; }
