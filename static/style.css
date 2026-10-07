@@ -835,3 +835,34 @@ button.primary:hover, .btn.primary:hover { background: #d8ff5c; }
 .log-preview[hidden] { display: none; }
 .log-preview .preview-main b { color: var(--lime); }
 .log-preview .preview-sub { color: var(--muted); font-size: 0.74rem; }
+
+/* Online food search: product details */
+
+.section-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 1.2rem 0 0.6rem; }
+
+.local-matches { display: flex; flex-direction: column; gap: 0.4rem; }
+.local-match {
+  display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline;
+  padding: 0.6rem 0.8rem; border-radius: var(--radius-sm); background: var(--lime-dim);
+  color: var(--text); text-decoration: none; font-size: 0.85rem;
+}
+.local-match-name { font-weight: 600; }
+.local-match-meta { color: var(--muted); font-size: 0.74rem; text-align: right; }
+
+.product-card { gap: 0.6rem; }
+.product-thumb { width: 52px; height: 52px; object-fit: contain; border-radius: 8px; background: #fff; flex-shrink: 0; }
+.product-head { flex: 1; min-width: 0; }
+.product-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.badge { font-size: 0.66rem; font-weight: 600; padding: 0.12rem 0.45rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.badge.nutri-a { background: #038141; color: #fff; }
+.badge.nutri-b { background: #85bb2f; color: #0a0e0c; }
+.badge.nutri-c { background: #fecb02; color: #0a0e0c; }
+.badge.nutri-d { background: #ee8100; color: #0a0e0c; }
+.badge.nutri-e { background: #e63e11; color: #fff; }
+.product-basis { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.product-card .item-macros { flex-wrap: wrap; row-gap: 0.25rem; color: var(--text); }
+.product-extra { font-size: 0.72rem; color: var(--muted); margin-top: 0.3rem; line-height: 1.5; }
+.product-ingredients { font-size: 0.74rem; color: var(--muted); }
+.product-ingredients summary { cursor: pointer; font-weight: 600; color: var(--text); }
+.product-ingredients p { margin: 0.35rem 0 0; line-height: 1.5; }
+.empty a { color: var(--lime); font-style: normal; font-weight: 600; text-decoration: underline; }

@@ -12,32 +12,75 @@
 
   <form method="get" class="search-bar">
     <input type="text" name="q" value="{{ query }}" placeholder="e.g. oats, greek yogurt, protein bar" autofocus>
+    {% if worldwide %}<input type="hidden" name="scope" value="world">{% endif %}
     <button type="submit" class="btn primary">Search</button>
   </form>
-  <p class="empty">Searches a free public packaged-food database (Open Food Facts) &mdash; best for branded/packaged items, not home-cooked dishes. Requires internet; results vary in completeness.</p>
+  <p class="empty">
+    {% if worldwide %}
+      Showing English-named products from every country.
+      <a href="{{ url_for('search_foods', q=query) }}">Only products sold in India</a>
+    {% else %}
+      Showing packaged products sold in India (Indian or imported brands), from Open Food Facts.
+      {% if query %}<a href="{{ url_for('search_foods', q=query, scope='world') }}">Search worldwide instead</a>{% endif %}
+    {% endif %}
+  </p>
+
+  {% if local_matches %}
+    <h2 class="section-title">Already in your foods</h2>
+    <div class="local-matches">
+      {% for f in local_matches %}
+        <a class="local-match" href="{{ url_for('dashboard') }}">
+          <span class="local-match-name">{{ f.name }}</span>
+          <span class="local-match-meta">{{ "%.0f"|format(f.calories) }} kcal / {{ f.serving_unit }}</span>
+        </a>
+      {% endfor %}
+    </div>
+    <p class="empty">Pick these from the Food Log on the dashboard &mdash; no need to add them again.</p>
+  {% endif %}
 
   {% if error %}
     <p class="empty">{{ error }}</p>
   {% elif query and not results %}
-    <p class="empty">No results for &ldquo;{{ query }}&rdquo;.</p>
+    <p class="empty">
+      No {{ '' if worldwide else 'India-sold ' }}products found for &ldquo;{{ query }}&rdquo;.
+      {% if not worldwide %}<a href="{{ url_for('search_foods', q=query, scope='world') }}">Try a worldwide search</a>, or scan the barcode.{% endif %}
+    </p>
   {% endif %}
 
   {% if results %}
+  <h2 class="section-title">Online results</h2>
   <div class="item-grid">
     {% for r in results %}
-    <div class="item-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
+    <div class="item-card product-card" style="animation-delay: {{ loop.index0 * 30 }}ms">
       <div class="item-card-top">
-        <div>
+        {% if r.image_url %}<img class="product-thumb" src="{{ r.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+        <div class="product-head">
           <div class="item-name">{{ r.name }}</div>
-          <div class="item-sub">{{ r.brand }}{{ ' · ' if r.brand }}per {{ r.serving_unit }}</div>
+          <div class="item-sub">{{ r.brand }}{{ ' · ' if r.brand and r.quantity }}{{ r.quantity }}</div>
+          <div class="product-badges">
+            {% if r.nutriscore %}<span class="badge nutri-{{ r.nutriscore }}">Nutri-Score {{ r.nutriscore|upper }}</span>{% endif %}
+            {% if r.sold_in_india %}<span class="badge">Sold in India</span>{% endif %}
+          </div>
         </div>
         <div class="item-kcal food">{{ "%.0f"|format(r.calories) }}<span>kcal</span></div>
       </div>
-      <div class="item-macros">
-        <span><i class="dot protein"></i>{{ "%.1f"|format(r.protein_g) }}g</span>
-        <span><i class="dot carbs"></i>{{ "%.1f"|format(r.carbs_g) }}g</span>
-        <span><i class="dot fat"></i>{{ "%.1f"|format(r.fat_g) }}g</span>
+      <div class="product-nutrition">
+        <div class="product-basis">Nutrition per {{ r.serving_unit }}</div>
+        <div class="item-macros">
+          <span><i class="dot protein"></i>Protein {{ "%.1f"|format(r.protein_g) }}g</span>
+          <span><i class="dot carbs"></i>Carbs {{ "%.1f"|format(r.carbs_g) }}g</span>
+          <span><i class="dot fat"></i>Fat {{ "%.1f"|format(r.fat_g) }}g</span>
+        </div>
+        <div class="product-extra">
+          Fiber {{ "%.1f"|format(r.fiber_g) }}g &middot; Sugar {{ "%.1f"|format(r.sugar_g) }}g &middot; Sat. fat {{ "%.1f"|format(r.sat_fat_g) }}g &middot; Sodium {{ "%.0f"|format(r.sodium_mg) }}mg{% if r.caffeine_mg %} &middot; <b class="caffeine-text">Caffeine {{ "%.0f"|format(r.caffeine_mg) }}mg</b>{% endif %}
+        </div>
       </div>
+      {% if r.ingredients %}
+        <details class="product-ingredients">
+          <summary>Ingredients</summary>
+          <p>{{ r.ingredients }}</p>
+        </details>
+      {% endif %}
       <form method="post" action="{{ url_for('add_searched_food') }}">
         <input type="hidden" name="food_json" value='{{ r|tojson }}'>
         <button type="submit" class="btn primary" style="width:100%">{{ icons.plus() }} Add to my foods</button>

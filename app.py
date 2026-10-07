@@ -1,5 +1,6 @@
 import io
 import json
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -847,6 +848,40 @@ def guess_category_from_off(product):
     return "other"
 
 
+_ACCENTED_LETTER = re.compile("[À-ÿ]")
+
+
+def off_english_name(p):
+    """The product's English name, or None if OFF only has it in another language.
+
+    For products whose main language isn't English, OFF's "English" name is
+    often just the original copied over (e.g. French text in product_name_en),
+    so such a name is ignored if it equals the original or has accented letters.
+    """
+    main = (p.get("product_name") or "").strip()
+    is_english = p.get("lang") == "en"
+    candidates = [p.get("product_name_en"), p.get("generic_name_en")]
+    if is_english:
+        candidates += [main, p.get("generic_name")]
+    for name in candidates:
+        name = (name or "").strip()
+        if len(name) < 3:
+            continue
+        if not is_english and (name == main or _ACCENTED_LETTER.search(name)):
+            continue
+        return name
+    if "en:india" in (p.get("countries_tags") or []) and len(main) >= 3 and not _ACCENTED_LETTER.search(main):
+        # Sold in India but tagged with another main language: the name on
+        # Indian shelves is nearly always English already (e.g. "Coke Zero Can").
+        return main
+    return None
+
+
+def off_has_nutrition(p):
+    n = p.get("nutriments", {})
+    return n.get("energy-kcal_serving") is not None or n.get("energy-kcal_100g") is not None
+
+
 def off_product_to_food(p):
     n = p.get("nutriments", {})
     has_serving = n.get("energy-kcal_serving") is not None
@@ -872,20 +907,40 @@ def off_product_to_food(p):
     else:
         serving_size_g = 100.0
 
+    ingredients = (p.get("ingredients_text_en") or (p.get("ingredients_text") if p.get("lang") == "en" else "") or "").strip()
     food = {
-        "name": (p.get("product_name") or p.get("generic_name") or "Unnamed product").strip(),
+        "name": off_english_name(p) or (p.get("product_name") or p.get("generic_name") or "Unnamed product").strip(),
         "brand": brands.strip(),
         "serving_unit": serving_unit,
         "category": guess_category_from_off(p),
         "serving_size_g": serving_size_g,
         "calories": raw("energy-kcal"),
+        # Display-only product details (not stored when the food is added).
+        "quantity": (p.get("quantity") or "").strip(),
+        "image_url": p.get("image_front_small_url") or "",
+        "nutriscore": grade if (grade := (p.get("nutriscore_grade") or "").lower()) in ("a", "b", "c", "d", "e") else "",
+        "ingredients": ingredients,
+        "sold_in_india": "en:india" in (p.get("countries_tags") or []),
     }
     for our_key, off_key, mult in OFF_FIELD_MAP:
         food[our_key] = raw(off_key) * mult
     return food
 
 
-def off_search(query, page_size=15):
+OFF_SEARCH_FIELDS = ",".join([
+    "code", "lang", "product_name", "product_name_en", "generic_name", "generic_name_en", "brands", "quantity",
+    "serving_size", "serving_quantity", "nutriments", "categories_tags", "food_groups_tags", "countries_tags",
+    "image_front_small_url", "nutriscore_grade", "ingredients_text", "ingredients_text_en",
+])
+
+
+def off_search(query, worldwide=False, page_size=24):
+    """English-named products with nutrition data.
+
+    By default only products *sold* in India (OFF's countries_tags, set from
+    where the product is available, not where it's made) -- so imported
+    brands on Indian shelves are included. worldwide=True drops that filter.
+    """
     import urllib.parse
 
     # api/v2/search ignores search_terms and returns the whole DB unfiltered
@@ -896,11 +951,20 @@ def off_search(query, page_size=15):
     # cross-origin browser requests, so both apps use it for consistency.
     # Using the .net mirror instead of .org -- .org's search.pl has been
     # returning 503 "temporarily unavailable" while .net serves it fine.
-    params = urllib.parse.urlencode(
-        {"search_terms": query, "search_simple": 1, "action": "process", "json": 1, "page_size": page_size}
-    )
-    data = _off_request(f"https://world.openfoodfacts.net/cgi/search.pl?{params}")
-    return [off_product_to_food(p) for p in data.get("products", []) if p.get("product_name")]
+    params = {
+        "search_terms": query, "search_simple": 1, "action": "process", "json": 1,
+        "page_size": page_size, "lc": "en", "fields": OFF_SEARCH_FIELDS,
+    }
+    if not worldwide:
+        params["cc"] = "in"
+    data = _off_request(f"https://world.openfoodfacts.net/cgi/search.pl?{urllib.parse.urlencode(params)}")
+    return [off_product_to_food(p) for p in data.get("products", []) if off_english_name(p) and off_has_nutrition(p)]
+
+
+def local_food_matches(query, limit=6):
+    words = query.lower().split()
+    rows = db.get_db().execute("SELECT * FROM foods ORDER BY name").fetchall()
+    return [r for r in rows if all(w in r["name"].lower() for w in words)][:limit]
 
 
 def off_lookup_barcode(barcode):
@@ -913,13 +977,17 @@ def off_lookup_barcode(barcode):
 @app.route("/foods/search")
 def search_foods():
     query = request.args.get("q", "").strip()
-    results, error = [], None
+    worldwide = request.args.get("scope") == "world"
+    results, local_matches, error = [], [], None
     if query:
+        local_matches = local_food_matches(query)
         try:
-            results = off_search(query)
+            results = off_search(query, worldwide=worldwide)
         except Exception:
             error = "Couldn't reach the online food database. Check your internet connection and try again."
-    return render_template("food_search.html", query=query, results=results, error=error)
+    return render_template(
+        "food_search.html", query=query, results=results, local_matches=local_matches, worldwide=worldwide, error=error
+    )
 
 
 @app.route("/foods/search/add", methods=["POST"])

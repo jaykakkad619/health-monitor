@@ -35,6 +35,32 @@ const OFF_FIELD_MAP = [
   ["caffeineMg", "caffeine", 1000],
 ];
 
+// The product's English name, or null if OFF only has it in another language.
+// For products whose main language isn't English, OFF's "English" name is often
+// just the original copied over (e.g. French text in product_name_en), so such a
+// name is ignored if it equals the original or has accented letters.
+function offEnglishName(p) {
+  const main = String(p.product_name || "").trim();
+  const isEnglish = p.lang === "en";
+  const candidates = [p.product_name_en, p.generic_name_en];
+  if (isEnglish) candidates.push(main, p.generic_name);
+  for (const raw of candidates) {
+    const name = String(raw || "").trim();
+    if (name.length < 3) continue;
+    if (!isEnglish && (name === main || /[À-ÿ]/.test(name))) continue;
+    return name;
+  }
+  // Sold in India but tagged with another main language: the name on Indian
+  // shelves is nearly always English already (e.g. "Coke Zero Can").
+  if ((p.countries_tags || []).includes("en:india") && main.length >= 3 && !/[À-ÿ]/.test(main)) return main;
+  return null;
+}
+
+function offHasNutrition(p) {
+  const n = p.nutriments || {};
+  return n["energy-kcal_serving"] !== undefined || n["energy-kcal_100g"] !== undefined;
+}
+
 function offProductToFood(p) {
   const n = p.nutriments || {};
   const hasServing = n["energy-kcal_serving"] !== undefined;
@@ -47,19 +73,35 @@ function offProductToFood(p) {
   };
   const brands = Array.isArray(p.brands) ? p.brands.join(", ") : String(p.brands || "");
   const servingSizeG = hasServing ? (Number.isFinite(parseFloat(p.serving_quantity)) ? parseFloat(p.serving_quantity) : null) : 100;
+  const grade = String(p.nutriscore_grade || "").toLowerCase();
   const food = {
-    name: String(p.product_name || p.generic_name || "Unnamed product").trim(),
+    name: offEnglishName(p) || String(p.product_name || p.generic_name || "Unnamed product").trim(),
     brand: brands.trim(),
     servingUnit,
     category: guessCategoryFromOff(p),
     servingSizeG,
     calories: raw("energy-kcal"),
+    // Display-only product details (not stored when the food is added).
+    quantity: String(p.quantity || "").trim(),
+    imageUrl: p.image_front_small_url || "",
+    nutriscore: ["a", "b", "c", "d", "e"].includes(grade) ? grade : "",
+    ingredients: String(p.ingredients_text_en || (p.lang === "en" ? p.ingredients_text : "") || "").trim(),
+    soldInIndia: (p.countries_tags || []).includes("en:india"),
   };
   for (const [ourKey, offKey, mult] of OFF_FIELD_MAP) food[ourKey] = raw(offKey) * mult;
   return food;
 }
 
-async function offSearch(query, pageSize = 15) {
+const OFF_SEARCH_FIELDS = [
+  "code", "lang", "product_name", "product_name_en", "generic_name", "generic_name_en", "brands", "quantity",
+  "serving_size", "serving_quantity", "nutriments", "categories_tags", "food_groups_tags", "countries_tags",
+  "image_front_small_url", "nutriscore_grade", "ingredients_text", "ingredients_text_en",
+].join(",");
+
+// English-named products with nutrition data. By default only products *sold*
+// in India (OFF's countries_tags reflect where a product is available, not
+// where it's made), so imported brands on Indian shelves are included.
+async function offSearch(query, { worldwide = false, pageSize = 24 } = {}) {
   // api/v2/search ignores search_terms and returns the whole DB unfiltered
   // (confirmed empirically -- a nonsense query still returned 4.6M "matches").
   // search.openfoodfacts.org (the newer search-a-licious backend) filters
@@ -68,11 +110,12 @@ async function offSearch(query, pageSize = 15) {
   // cross-origin browser requests, so both apps use it for consistency.
   // Using the .net mirror instead of .org -- .org's search.pl has been
   // returning 503 "temporarily unavailable" while .net serves it fine.
-  const params = new URLSearchParams({ search_terms: query, search_simple: 1, action: "process", json: 1, page_size: pageSize });
+  const params = new URLSearchParams({ search_terms: query, search_simple: 1, action: "process", json: 1, page_size: pageSize, lc: "en", fields: OFF_SEARCH_FIELDS });
+  if (!worldwide) params.set("cc", "in");
   const resp = await fetch(`https://world.openfoodfacts.net/cgi/search.pl?${params}`);
   if (!resp.ok) throw new Error("Search failed");
   const data = await resp.json();
-  return (data.products || []).filter((p) => p.product_name).map(offProductToFood);
+  return (data.products || []).filter((p) => offEnglishName(p) && offHasNutrition(p)).map(offProductToFood);
 }
 
 async function offLookupBarcode(barcode) {
@@ -865,6 +908,8 @@ async function renderFoodSearch() {
   const qIndex = hash.indexOf("?");
   const params = qIndex === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qIndex));
   const query = params.get("q") || "";
+  const worldwide = params.get("scope") === "world";
+  const searchHref = (q, world) => `#/foods/search?q=${encodeURIComponent(q)}${world ? "&scope=world" : ""}`;
 
   view.innerHTML = `
     <div class="page-head"><div><p class="eyebrow">Food library</p><h1>Search Online</h1></div></div>
@@ -872,49 +917,86 @@ async function renderFoodSearch() {
       <input type="text" id="searchQuery" value="${esc(query)}" placeholder="e.g. oats, greek yogurt, protein bar" autofocus>
       <button type="submit" class="btn primary">Search</button>
     </form>
-    <p class="empty">Searches a free public packaged-food database (Open Food Facts) &mdash; best for branded/packaged items, not home-cooked dishes. Requires internet; results vary in completeness.</p>
+    <p class="empty">${
+      worldwide
+        ? `Showing English-named products from every country. <a href="${searchHref(query, false)}">Only products sold in India</a>`
+        : `Showing packaged products sold in India (Indian or imported brands), from Open Food Facts.${query ? ` <a href="${searchHref(query, true)}">Search worldwide instead</a>` : ""}`
+    }</p>
+    <div id="localMatches"></div>
     <div id="searchResults"></div>
   `;
 
   document.getElementById("searchForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const q = document.getElementById("searchQuery").value.trim();
-    location.hash = `#/foods/search?q=${encodeURIComponent(q)}`;
+    location.hash = searchHref(q, worldwide);
   });
 
   if (!query) return;
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const localMatches = (await db.getAll("foods"))
+    .filter((f) => words.every((w) => f.name.toLowerCase().includes(w)))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 6);
+  if (localMatches.length) {
+    document.getElementById("localMatches").innerHTML = `
+      <h2 class="section-title">Already in your foods</h2>
+      <div class="local-matches">
+        ${localMatches
+          .map((f) => `<a class="local-match" href="#/"><span class="local-match-name">${esc(f.name)}</span><span class="local-match-meta">${Math.round(f.calories)} kcal / ${esc(f.servingUnit)}</span></a>`)
+          .join("")}
+      </div>
+      <p class="empty">Pick these from the Food Log on the Today screen &mdash; no need to add them again.</p>`;
+  }
 
   const resultsEl = document.getElementById("searchResults");
   resultsEl.innerHTML = `<p class="empty">Searching&hellip;</p>`;
   let results = [];
   try {
-    results = await offSearch(query);
+    results = await offSearch(query, { worldwide });
   } catch (err) {
     resultsEl.innerHTML = `<p class="empty">Couldn't reach the online food database. Check your internet connection and try again.</p>`;
     return;
   }
 
   resultsEl.innerHTML = results.length
-    ? `<div class="item-grid">
+    ? `<h2 class="section-title">Online results</h2>
+      <div class="item-grid">
         ${results
           .map(
             (r, i) => `
-        <div class="item-card" style="animation-delay:${i * 30}ms">
+        <div class="item-card product-card" style="animation-delay:${i * 30}ms">
           <div class="item-card-top">
-            <div><div class="item-name">${esc(r.name)}</div><div class="item-sub">${esc(r.brand)}${r.brand ? " &middot; " : ""}per ${esc(r.servingUnit)}</div></div>
+            ${r.imageUrl ? `<img class="product-thumb" src="${esc(r.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}
+            <div class="product-head">
+              <div class="item-name">${esc(r.name)}</div>
+              <div class="item-sub">${esc(r.brand)}${r.brand && r.quantity ? " &middot; " : ""}${esc(r.quantity)}</div>
+              <div class="product-badges">
+                ${r.nutriscore ? `<span class="badge nutri-${r.nutriscore}">Nutri-Score ${r.nutriscore.toUpperCase()}</span>` : ""}
+                ${r.soldInIndia ? `<span class="badge">Sold in India</span>` : ""}
+              </div>
+            </div>
             <div class="item-kcal food">${Math.round(r.calories)}<span>kcal</span></div>
           </div>
-          <div class="item-macros">
-            <span><i class="dot protein"></i>${r.proteinG.toFixed(1)}g</span>
-            <span><i class="dot carbs"></i>${r.carbsG.toFixed(1)}g</span>
-            <span><i class="dot fat"></i>${r.fatG.toFixed(1)}g</span>
+          <div class="product-nutrition">
+            <div class="product-basis">Nutrition per ${esc(r.servingUnit)}</div>
+            <div class="item-macros">
+              <span><i class="dot protein"></i>Protein ${r.proteinG.toFixed(1)}g</span>
+              <span><i class="dot carbs"></i>Carbs ${r.carbsG.toFixed(1)}g</span>
+              <span><i class="dot fat"></i>Fat ${r.fatG.toFixed(1)}g</span>
+            </div>
+            <div class="product-extra">Fiber ${r.fiberG.toFixed(1)}g &middot; Sugar ${r.sugarG.toFixed(1)}g &middot; Sat. fat ${r.satFatG.toFixed(1)}g &middot; Sodium ${Math.round(r.sodiumMg)}mg${r.caffeineMg ? ` &middot; <b class="caffeine-text">Caffeine ${Math.round(r.caffeineMg)}mg</b>` : ""}</div>
           </div>
+          ${r.ingredients ? `<details class="product-ingredients"><summary>Ingredients</summary><p>${esc(r.ingredients)}</p></details>` : ""}
           <button type="button" class="btn primary" style="width:100%" data-add-search="${i}">${icons.plus} Add to my foods</button>
         </div>`
           )
           .join("")}
       </div>`
-    : `<p class="empty">No results for &ldquo;${esc(query)}&rdquo;.</p>`;
+    : `<p class="empty">No ${worldwide ? "" : "India-sold "}products found for &ldquo;${esc(query)}&rdquo;.${
+        worldwide ? "" : ` <a href="${searchHref(query, true)}">Try a worldwide search</a>, or scan the barcode.`
+      }</p>`;
 
   resultsEl.querySelectorAll("[data-add-search]").forEach((btn) => {
     btn.addEventListener("click", async () => {
