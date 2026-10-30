@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS food_logs (
     food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
     servings REAL NOT NULL,
     grams REAL,
+    quantity REAL,
+    unit_label TEXT,
     meal TEXT NOT NULL DEFAULT 'other',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

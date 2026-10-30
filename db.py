@@ -52,6 +52,10 @@ def _migrate(conn):
         conn.execute("ALTER TABLE food_logs ADD COLUMN meal TEXT NOT NULL DEFAULT 'other'")
     if "grams" not in food_log_cols:
         conn.execute("ALTER TABLE food_logs ADD COLUMN grams REAL")
+    if "quantity" not in food_log_cols:
+        conn.execute("ALTER TABLE food_logs ADD COLUMN quantity REAL")
+    if "unit_label" not in food_log_cols:
+        conn.execute("ALTER TABLE food_logs ADD COLUMN unit_label TEXT")
 
     conn.commit()
 

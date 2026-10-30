@@ -91,21 +91,25 @@
       <form method="post" action="{{ url_for('log_food') }}" class="quick-add" id="quickAddFood">
         <input type="hidden" name="log_date" value="{{ log_date }}">
         <input type="search" id="foodFilter" class="food-filter" placeholder="Search {{ foods|length }} foods&hellip; e.g. chai, paneer, chia" autocomplete="off">
+        <div class="filter-hint" id="foodFilterHint" hidden></div>
         <select name="food_id" id="foodSelect" required>
           <option value="" disabled selected>Select food&hellip;</option>
           {% for group in food_groups %}
             <optgroup label="{{ group.label }}">
               {% for f in group.rows %}
-                <option value="{{ f.id }}" data-serving-size-g="{{ f.serving_size_g or '' }}" data-size-presets='{{ f.size_presets or "[]" }}'>{{ f.name }} &middot; {{ "%.0f"|format(f.calories) }} kcal / {{ f.serving_unit }}</option>
+                <option value="{{ f.id }}">{{ f.name }} &middot; {{ "%.0f"|format(f.calories) }} kcal / {{ f.serving_unit }}</option>
               {% endfor %}
             </optgroup>
           {% endfor %}
         </select>
-        <input type="number" step="0.1" min="0" name="servings" id="foodServings" placeholder="Qty" value="1" required>
-        <select id="foodSizeSelect" class="size-select" style="display:none">
-          <option value="">Custom grams&hellip;</option>
+        <div class="qty-stepper">
+          <button type="button" id="qtyMinus" aria-label="Less">&minus;</button>
+          <input type="number" step="any" min="0" name="quantity" id="foodQty" value="1" required aria-label="How many">
+          <button type="button" id="qtyPlus" aria-label="More">+</button>
+        </div>
+        <select name="unit" id="foodUnit" class="unit-select" aria-label="Unit">
+          <option value="serving">serving</option>
         </select>
-        <input type="number" step="1" min="0" name="grams" id="foodGrams" placeholder="g / ml" style="display:none">
         <select name="meal" class="meal-select">
           {% for key, label in meals %}
             <option value="{{ key }}" {{ 'selected' if key == guessed_meal else '' }}>{{ label }}</option>
@@ -129,7 +133,7 @@
               <div class="log-item-main">
                 <span class="log-item-name">{{ row.name }}</span>
                 <span class="log-item-meta">
-                  {% if row.grams %}{{ "%.0f"|format(row.grams) }}g{% else %}{{ row.servings }} &times; {{ row.serving_unit }}{% endif %}
+                  {% if row.unit_label %}{{ '%g'|format(row.quantity) }} &times; {{ row.unit_label }}{% if row.grams %} &middot; {{ "%.0f"|format(row.grams) }}g{% endif %}{% elif row.grams %}{{ "%.0f"|format(row.grams) }}g{% else %}{{ row.servings }} &times; {{ row.serving_unit }}{% endif %}
                   &middot; P {{ "%.0f"|format(row.protein_g) }}g &middot; C {{ "%.0f"|format(row.carbs_g) }}g &middot; F {{ "%.0f"|format(row.fat_g) }}g{% if row.caffeine_mg %} &middot; {{ "%.0f"|format(row.caffeine_mg) }}mg caffeine{% endif %}
                 </span>
               </div>
@@ -218,28 +222,28 @@
 
       const foodSelect = document.getElementById('foodSelect');
       const foodFilter = document.getElementById('foodFilter');
-      const qtyInput = document.getElementById('foodServings');
-      const sizeSelect = document.getElementById('foodSizeSelect');
-      const gramsInput = document.getElementById('foodGrams');
+      const qtyInput = document.getElementById('foodQty');
+      const unitSelect = document.getElementById('foodUnit');
       const preview = document.getElementById('foodPreview');
 
       const fmt = (v) => (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
+      const fmtQty = (q) => String(Math.round(q * 100) / 100);
+      const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-      // How many servings the current inputs amount to (grams are converted
-      // via the food's serving size, exactly as the server does on submit).
-      function currentFactor(food) {
-        if (gramsInput.style.display !== 'none') {
-          const g = parseFloat(gramsInput.value);
-          return food.serving_size_g && g > 0 ? g / food.serving_size_g : 0;
-        }
-        return parseFloat(qtyInput.value) || 0;
-      }
+      const unitOf = (food, key) => food.units.find((u) => u.key === key) || food.units[0];
+      // Servings for a count of a unit -- the same maths the server does on submit.
+      const servingsFor = (food, unit, qty) => (unit.grams ? (qty * unit.grams) / food.serving_size_g : qty);
 
       function updatePreview() {
         const food = FOODS[foodSelect.value];
-        const factor = food ? currentFactor(food) : 0;
-        if (!food || !factor) { preview.hidden = true; return; }
+        const qty = parseFloat(qtyInput.value) || 0;
+        if (!food || !qty) { preview.hidden = true; return; }
+        const unit = unitOf(food, unitSelect.value);
+        const factor = servingsFor(food, unit, qty);
         const v = (k) => (food[k] || 0) * factor;
+        const amount = unit.key === 'g'
+          ? `${fmtQty(qty)} g / ml`
+          : `${fmtQty(qty)} &times; ${esc(unit.label)}${unit.grams ? ` = ${fmt(qty * unit.grams)} g` : ''}`;
         const extras = [`Fiber ${fmt(v('fiber_g'))}g`, `Sugar ${fmt(v('sugar_g'))}g`, `Sodium ${fmt(v('sodium_mg'))}mg`];
         if (v('caffeine_mg') > 0) extras.push(`<b class="caffeine-text">Caffeine ${fmt(v('caffeine_mg'))}mg</b>`);
         const rich = NUTRIENTS
@@ -249,7 +253,7 @@
           .sort((a, b) => b.pct - a.pct)
           .slice(0, 4);
         preview.innerHTML = `
-          <div class="preview-main"><b>${fmt(v('calories'))} kcal</b> &middot; P ${fmt(v('protein_g'))}g &middot; C ${fmt(v('carbs_g'))}g &middot; F ${fmt(v('fat_g'))}g</div>
+          <div class="preview-main"><span class="preview-amount">${amount}</span> &rarr; <b>${fmt(v('calories'))} kcal</b> &middot; P ${fmt(v('protein_g'))}g &middot; C ${fmt(v('carbs_g'))}g &middot; F ${fmt(v('fat_g'))}g</div>
           <div class="preview-sub">${extras.join(' &middot; ')}</div>
           ${rich.length ? `<div class="preview-sub">Good source of: ${rich.map((n) => `${n.label} ${Math.round(n.pct)}%`).join(' &middot; ')}</div>` : ''}`;
         preview.hidden = false;
@@ -259,19 +263,26 @@
       // since hiding <option>s is ignored by iOS Safari.
       const allGroups = Array.from(foodSelect.querySelectorAll('optgroup')).map((g) => ({ label: g.label, options: Array.from(g.children) }));
       const placeholder = foodSelect.options[0];
+      const filterHint = document.getElementById('foodFilterHint');
       foodFilter.addEventListener('input', () => {
         const q = foodFilter.value.trim().toLowerCase();
+        // Every typed word must appear somewhere in the name, in any order:
+        // "pati" finds Chapati, "chai masala" finds "Masala / adrak chai".
+        const words = q.split(/\s+/).filter(Boolean);
+        const isMatch = (text) => words.every((w) => text.includes(w));
         const keep = foodSelect.value;
         foodSelect.replaceChildren(placeholder);
         let firstMatch = null;
+        let count = 0;
         for (const g of allGroups) {
-          const matches = g.options.filter((o) => !q || o.textContent.toLowerCase().includes(q) || g.label.toLowerCase().includes(q));
+          const matches = g.options.filter((o) => isMatch(`${o.textContent} ${g.label}`.toLowerCase()));
           if (!matches.length) continue;
           const og = document.createElement('optgroup');
           og.label = g.label;
           og.append(...matches);
           foodSelect.appendChild(og);
           firstMatch = firstMatch || matches[0];
+          count += matches.length;
         }
         if (q && firstMatch && !(keep && foodSelect.querySelector(`option[value="${keep}"]`))) {
           foodSelect.value = firstMatch.value;
@@ -279,53 +290,53 @@
         } else {
           foodSelect.value = keep;
         }
+        // A native select only shows the chosen item, so say how many matched.
+        filterHint.hidden = !q;
+        filterHint.textContent = !count
+          ? `No foods match "${foodFilter.value.trim()}"`
+          : count === 1 ? '1 food matches' : `${count} foods match \u2014 open the list below to see them all`;
       });
 
+      // Each unit option shows what one of it costs, e.g. "medium (~40g) · 104 kcal".
+      let lastUnitKey = 'serving';
       function updateFoodInputs() {
-        const opt = foodSelect.selectedOptions[0];
-        const servingSizeG = opt && opt.dataset.servingSizeG;
-        let presets = [];
-        try { presets = JSON.parse((opt && opt.dataset.sizePresets) || '[]'); } catch (e) { presets = []; }
-
-        sizeSelect.innerHTML = '<option value="">Custom grams&hellip;</option>';
-        for (const p of presets) {
+        const food = FOODS[foodSelect.value];
+        if (!food) return;
+        unitSelect.replaceChildren(...food.units.map((u) => {
           const o = document.createElement('option');
-          o.value = p.grams;
-          o.textContent = /\d/.test(p.label) ? p.label : `${p.label} (${p.grams}g)`;
-          sizeSelect.appendChild(o);
-        }
-
-        if (presets.length) {
-          sizeSelect.style.display = '';
-          gramsInput.style.display = '';
-          qtyInput.style.display = 'none';
-          qtyInput.required = false;
-          sizeSelect.value = presets[0].grams;
-          gramsInput.value = presets[0].grams;
-        } else if (servingSizeG) {
-          sizeSelect.style.display = 'none';
-          gramsInput.style.display = '';
-          qtyInput.style.display = 'none';
-          qtyInput.required = false;
-          gramsInput.value = servingSizeG;
-        } else {
-          sizeSelect.style.display = 'none';
-          gramsInput.style.display = 'none';
-          qtyInput.style.display = '';
-          qtyInput.required = true;
-          gramsInput.value = '';
-        }
+          o.value = u.key;
+          o.textContent = u.key === 'g' ? u.label : `${u.label} \u00b7 ${Math.round(food.calories * servingsFor(food, u, 1))} kcal`;
+          return o;
+        }));
+        qtyInput.value = 1;
+        lastUnitKey = unitSelect.value;
         updatePreview();
       }
 
-      sizeSelect.addEventListener('change', () => {
-        if (sizeSelect.value) gramsInput.value = sizeSelect.value;
+      // Switching to grams carries the amount over (3 rotis -> 120 g);
+      // switching from grams back to a count starts again at 1.
+      unitSelect.addEventListener('change', () => {
+        const food = FOODS[foodSelect.value];
+        const prev = food && food.units.find((u) => u.key === lastUnitKey);
+        const qty = parseFloat(qtyInput.value) || 0;
+        if (unitSelect.value === 'g' && prev && prev.grams) qtyInput.value = Math.round(qty * prev.grams);
+        else if (lastUnitKey === 'g') qtyInput.value = 1;
+        lastUnitKey = unitSelect.value;
         updatePreview();
       });
-      gramsInput.addEventListener('input', () => {
-        if (sizeSelect.value && gramsInput.value !== sizeSelect.value) sizeSelect.value = '';
+
+      // Steppers move in whole units (half a unit below 1), or 10 g at a time.
+      function step(dir) {
+        const qty = parseFloat(qtyInput.value) || 0;
+        let next;
+        if (unitSelect.value === 'g') next = Math.max(10, qty + dir * 10);
+        else if (dir > 0) next = qty < 1 ? 1 : Math.floor(qty) + 1;
+        else next = qty > 1 ? Math.ceil(qty) - 1 : 0.5;
+        qtyInput.value = next;
         updatePreview();
-      });
+      }
+      document.getElementById('qtyMinus').addEventListener('click', () => step(-1));
+      document.getElementById('qtyPlus').addEventListener('click', () => step(1));
       qtyInput.addEventListener('input', updatePreview);
       foodSelect.addEventListener('change', updateFoodInputs);
     })();

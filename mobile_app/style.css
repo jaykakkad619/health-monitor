@@ -567,6 +567,7 @@ button.btn.primary, a.btn.primary { background: var(--lime); border-color: var(-
 
 /* Search and food picker each get a full row; size/qty/meal/add share the next. */
 .quick-add .food-filter, .quick-add #foodSelect { flex: 1 1 100%; }
+.quick-add .filter-hint { flex: 1 1 100%; font-size: 0.74rem; color: var(--muted); margin-top: -0.2rem; }
 
 .log-preview {
   flex: 1 1 100%;
@@ -610,3 +611,19 @@ button.btn.primary, a.btn.primary { background: var(--lime); border-color: var(-
 .product-ingredients summary { cursor: pointer; font-weight: 600; color: var(--text); }
 .product-ingredients p { margin: 0.35rem 0 0; line-height: 1.5; }
 .empty a { color: var(--lime); font-style: normal; font-weight: 600; text-decoration: underline; }
+
+/* Count x unit picker in the food quick-add form ("3 x medium roti") */
+
+.qty-stepper { display: flex; flex-shrink: 0; }
+.quick-add .qty-stepper button {
+  background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text);
+  width: 36px; padding: 0; font-size: 1.1rem; font-weight: 600;
+}
+.quick-add .qty-stepper button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.quick-add .qty-stepper button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.quick-add .qty-stepper input[type="number"] {
+  width: 56px; border-radius: 0; border-left: 0; border-right: 0; text-align: center; -moz-appearance: textfield;
+}
+.qty-stepper input::-webkit-outer-spin-button, .qty-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.quick-add select.unit-select { flex: 1 1 120px; min-width: 0; }
+.log-preview .preview-amount { font-weight: 600; }

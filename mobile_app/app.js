@@ -223,6 +223,33 @@ const CAFFEINE_LIMIT_MG = 400;
 // Limits rather than targets: never listed as a "good source of" in the log preview.
 const LIMIT_NUTRIENT_KEYS = ["satFatG", "cholesterolMg", "sodiumMg", "caffeineMg"];
 
+// '1 medium (~40g)' -> 'medium (~40g)', so a count reads '3 x medium (~40g)'.
+function unitText(label) {
+  return String(label || "").trim().replace(/^1\s+/, "") || "serving";
+}
+
+// Ways to measure a food when logging it (mirrors food_units in the Flask app):
+// its serving, each quick-pick size, and raw grams. `grams` is grams per one
+// unit (null for a serving with no known weight); the form multiplies it by
+// the count the user enters.
+function foodUnits(food) {
+  const servingG = food.servingSizeG || null;
+  const units = [{ key: "serving", label: unitText(food.servingUnit), grams: servingG }];
+  if (servingG) {
+    (food.sizePresets || []).forEach((preset, i) => {
+      if (preset.grams === servingG) return;
+      const label = /\d/.test(preset.label) ? preset.label : `${preset.label} (${preset.grams}g)`;
+      units.push({ key: `size${i}`, label: unitText(label), grams: preset.grams });
+    });
+    units.push({ key: "g", label: "grams / ml", grams: 1 });
+  }
+  return units;
+}
+
+const unitOf = (food, key) => foodUnits(food).find((u) => u.key === key) || foodUnits(food)[0];
+// Servings for a count of a unit -- shared by the live preview and the submit handler.
+const servingsFor = (food, unit, qty) => (unit.grams ? (qty * unit.grams) / food.servingSizeG : qty);
+
 // Keyword -> our category, checked against OFF's categories_tags/food_groups_tags.
 // Order matters: more specific matches (exotic fruit) must be checked before broader ones (fruit).
 const OFF_CATEGORY_KEYWORDS = [
@@ -362,6 +389,8 @@ async function dayTotals(dateStr) {
         servingUnit: f.servingUnit,
         servings: l.servings,
         grams: l.grams || null,
+        quantity: l.quantity ?? null,
+        unitLabel: l.unitLabel || null,
         calories: f.calories * l.servings,
         proteinG: f.proteinG * l.servings,
         carbsG: f.carbsG * l.servings,
@@ -527,6 +556,7 @@ async function renderDashboard() {
       <div class="log-card-head"><h2>${icons.fork} Food Log</h2></div>
       <form id="quickAddFood" class="quick-add">
         <input type="search" id="foodFilter" class="food-filter" placeholder="Search ${totals.foods.length} foods&hellip; e.g. chai, paneer, chia" autocomplete="off">
+        <div class="filter-hint" id="foodFilterHint" hidden></div>
         <select id="foodSelect" required>
           <option value="" disabled selected>Select food&hellip;</option>
           ${foodGroups
@@ -534,17 +564,20 @@ async function renderDashboard() {
               (g) => `<optgroup label="${esc(g.label)}">${g.rows
                 .map(
                   (f) =>
-                    `<option value="${f.id}" data-serving-size-g="${f.servingSizeG || ""}" data-size-presets='${esc(JSON.stringify(f.sizePresets || []))}'>${esc(f.name)} &middot; ${Math.round(f.calories)} kcal / ${esc(f.servingUnit)}</option>`
+                    `<option value="${f.id}">${esc(f.name)} &middot; ${Math.round(f.calories)} kcal / ${esc(f.servingUnit)}</option>`
                 )
                 .join("")}</optgroup>`
             )
             .join("")}
         </select>
-        <input type="number" step="0.1" min="0" id="foodServings" placeholder="Qty" value="1" required>
-        <select id="foodSizeSelect" class="size-select" style="display:none">
-          <option value="">Custom grams&hellip;</option>
+        <div class="qty-stepper">
+          <button type="button" id="qtyMinus" aria-label="Less">&minus;</button>
+          <input type="number" step="any" min="0" id="foodQty" value="1" required aria-label="How many">
+          <button type="button" id="qtyPlus" aria-label="More">+</button>
+        </div>
+        <select id="foodUnit" class="unit-select" aria-label="Unit">
+          <option value="serving">serving</option>
         </select>
-        <input type="number" step="1" min="0" id="foodGrams" placeholder="g / ml" style="display:none">
         <select id="foodMeal" class="meal-select">
           ${MEALS.map(([key, label]) => `<option value="${key}" ${key === guessMeal() ? "selected" : ""}>${label}</option>`).join("")}
         </select>
@@ -567,7 +600,13 @@ async function renderDashboard() {
                     .map(
                       (row, i) => `
             <li class="log-item" style="animation-delay:${i * 40}ms">
-              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${row.grams ? `${Math.round(row.grams)}g` : `${row.servings} &times; ${esc(row.servingUnit)}`} &middot; P ${Math.round(row.proteinG)}g &middot; C ${Math.round(row.carbsG)}g &middot; F ${Math.round(row.fatG)}g${row.caffeineMg ? ` &middot; ${Math.round(row.caffeineMg)}mg caffeine` : ""}</span></div>
+              <div class="log-item-main"><span class="log-item-name">${esc(row.name)}</span><span class="log-item-meta">${
+                row.unitLabel
+                  ? `${Number(row.quantity.toFixed(2))} &times; ${esc(row.unitLabel)}${row.grams ? ` &middot; ${Math.round(row.grams)}g` : ""}`
+                  : row.grams
+                  ? `${Math.round(row.grams)}g`
+                  : `${row.servings} &times; ${esc(row.servingUnit)}`
+              } &middot; P ${Math.round(row.proteinG)}g &middot; C ${Math.round(row.carbsG)}g &middot; F ${Math.round(row.fatG)}g${row.caffeineMg ? ` &middot; ${Math.round(row.caffeineMg)}mg caffeine` : ""}</span></div>
               <span class="log-item-kcal">${Math.round(row.calories)}</span>
               <button class="icon-btn danger" data-delete-food-log="${row.id}">${icons.trash}</button>
             </li>`
@@ -649,31 +688,25 @@ async function renderDashboard() {
 
   const foodSelect = document.getElementById("foodSelect");
   const foodFilter = document.getElementById("foodFilter");
-  const foodQty = document.getElementById("foodServings");
-  const foodSizeSelect = document.getElementById("foodSizeSelect");
-  const foodGrams = document.getElementById("foodGrams");
+  const foodQty = document.getElementById("foodQty");
+  const foodUnit = document.getElementById("foodUnit");
   const foodPreview = document.getElementById("foodPreview");
 
   const fmt = (v) => (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
-
-  // How many servings the current inputs amount to (grams are converted via
-  // the food's serving size, exactly as the submit handler does).
-  function currentFactor(food) {
-    if (foodGrams.style.display !== "none") {
-      const g = parseFloat(foodGrams.value);
-      return food.servingSizeG && g > 0 ? g / food.servingSizeG : 0;
-    }
-    return parseFloat(foodQty.value) || 0;
-  }
+  const fmtQty = (q) => String(Math.round(q * 100) / 100);
 
   function updatePreview() {
     const food = foodsById.get(Number(foodSelect.value));
-    const factor = food ? currentFactor(food) : 0;
-    if (!food || !factor) {
+    const qty = parseFloat(foodQty.value) || 0;
+    if (!food || !qty) {
       foodPreview.hidden = true;
       return;
     }
+    const unit = unitOf(food, foodUnit.value);
+    const factor = servingsFor(food, unit, qty);
     const v = (k) => (food[k] || 0) * factor;
+    const amount =
+      unit.key === "g" ? `${fmtQty(qty)} g / ml` : `${fmtQty(qty)} &times; ${esc(unit.label)}${unit.grams ? ` = ${fmt(qty * unit.grams)} g` : ""}`;
     const extras = [`Fiber ${fmt(v("fiberG"))}g`, `Sugar ${fmt(v("sugarG"))}g`, `Sodium ${fmt(v("sodiumMg"))}mg`];
     if (v("caffeineMg") > 0) extras.push(`<b class="caffeine-text">Caffeine ${fmt(v("caffeineMg"))}mg</b>`);
     const rich = NUTRIENTS.filter((n) => n.dv && !LIMIT_NUTRIENT_KEYS.includes(n.key))
@@ -682,7 +715,7 @@ async function renderDashboard() {
       .sort((a, b) => b.pct - a.pct)
       .slice(0, 4);
     foodPreview.innerHTML = `
-      <div class="preview-main"><b>${fmt(v("calories"))} kcal</b> &middot; P ${fmt(v("proteinG"))}g &middot; C ${fmt(v("carbsG"))}g &middot; F ${fmt(v("fatG"))}g</div>
+      <div class="preview-main"><span class="preview-amount">${amount}</span> &rarr; <b>${fmt(v("calories"))} kcal</b> &middot; P ${fmt(v("proteinG"))}g &middot; C ${fmt(v("carbsG"))}g &middot; F ${fmt(v("fatG"))}g</div>
       <div class="preview-sub">${extras.join(" &middot; ")}</div>
       ${rich.length ? `<div class="preview-sub">Good source of: ${rich.map((n) => `${n.label} ${Math.round(n.pct)}%`).join(" &middot; ")}</div>` : ""}`;
     foodPreview.hidden = false;
@@ -692,19 +725,26 @@ async function renderDashboard() {
   // since hiding <option>s is ignored by iOS Safari.
   const allGroups = Array.from(foodSelect.querySelectorAll("optgroup")).map((g) => ({ label: g.label, options: Array.from(g.children) }));
   const placeholderOption = foodSelect.options[0];
+  const filterHint = document.getElementById("foodFilterHint");
   foodFilter.addEventListener("input", () => {
     const q = foodFilter.value.trim().toLowerCase();
+    // Every typed word must appear somewhere in the name, in any order:
+    // "pati" finds Chapati, "chai masala" finds "Masala / adrak chai".
+    const words = q.split(/\s+/).filter(Boolean);
+    const isMatch = (text) => words.every((w) => text.includes(w));
     const keep = foodSelect.value;
     foodSelect.replaceChildren(placeholderOption);
     let firstMatch = null;
+    let count = 0;
     for (const g of allGroups) {
-      const matches = g.options.filter((o) => !q || o.textContent.toLowerCase().includes(q) || g.label.toLowerCase().includes(q));
+      const matches = g.options.filter((o) => isMatch(`${o.textContent} ${g.label}`.toLowerCase()));
       if (!matches.length) continue;
       const og = document.createElement("optgroup");
       og.label = g.label;
       og.append(...matches);
       foodSelect.appendChild(og);
       firstMatch = firstMatch || matches[0];
+      count += matches.length;
     }
     if (q && firstMatch && !(keep && foodSelect.querySelector(`option[value="${keep}"]`))) {
       foodSelect.value = firstMatch.value;
@@ -712,83 +752,78 @@ async function renderDashboard() {
     } else {
       foodSelect.value = keep;
     }
+    // A native select only shows the chosen item, so say how many matched.
+    filterHint.hidden = !q;
+    filterHint.textContent = !count
+      ? `No foods match "${foodFilter.value.trim()}"`
+      : count === 1 ? "1 food matches" : `${count} foods match \u2014 open the list below to see them all`;
   });
 
+  // Each unit option shows what one of it costs, e.g. "medium (~40g) · 104 kcal".
+  let lastUnitKey = "serving";
   function updateFoodInputs() {
-    const opt = foodSelect.selectedOptions[0];
-    const servingSizeG = opt && opt.dataset.servingSizeG;
-    let presets = [];
-    try {
-      presets = JSON.parse((opt && opt.dataset.sizePresets) || "[]");
-    } catch (e) {
-      presets = [];
-    }
-
-    foodSizeSelect.innerHTML = '<option value="">Custom grams&hellip;</option>';
-    for (const p of presets) {
-      const o = document.createElement("option");
-      o.value = p.grams;
-      o.textContent = /\d/.test(p.label) ? p.label : `${p.label} (${p.grams}g)`;
-      foodSizeSelect.appendChild(o);
-    }
-
-    if (presets.length) {
-      foodSizeSelect.style.display = "";
-      foodGrams.style.display = "";
-      foodQty.style.display = "none";
-      foodQty.required = false;
-      foodSizeSelect.value = presets[0].grams;
-      foodGrams.value = presets[0].grams;
-    } else if (servingSizeG) {
-      foodSizeSelect.style.display = "none";
-      foodGrams.style.display = "";
-      foodQty.style.display = "none";
-      foodQty.required = false;
-      foodGrams.value = servingSizeG;
-    } else {
-      foodSizeSelect.style.display = "none";
-      foodGrams.style.display = "none";
-      foodQty.style.display = "";
-      foodQty.required = true;
-      foodGrams.value = "";
-    }
+    const food = foodsById.get(Number(foodSelect.value));
+    if (!food) return;
+    foodUnit.replaceChildren(
+      ...foodUnits(food).map((u) => {
+        const o = document.createElement("option");
+        o.value = u.key;
+        o.textContent = u.key === "g" ? u.label : `${u.label} \u00b7 ${Math.round(food.calories * servingsFor(food, u, 1))} kcal`;
+        return o;
+      })
+    );
+    foodQty.value = 1;
+    lastUnitKey = foodUnit.value;
     updatePreview();
   }
 
-  foodSizeSelect.addEventListener("change", () => {
-    if (foodSizeSelect.value) foodGrams.value = foodSizeSelect.value;
+  // Switching to grams carries the amount over (3 rotis -> 120 g);
+  // switching from grams back to a count starts again at 1.
+  foodUnit.addEventListener("change", () => {
+    const food = foodsById.get(Number(foodSelect.value));
+    const prev = food && foodUnits(food).find((u) => u.key === lastUnitKey);
+    const qty = parseFloat(foodQty.value) || 0;
+    if (foodUnit.value === "g" && prev && prev.grams) foodQty.value = Math.round(qty * prev.grams);
+    else if (lastUnitKey === "g") foodQty.value = 1;
+    lastUnitKey = foodUnit.value;
     updatePreview();
   });
-  foodGrams.addEventListener("input", () => {
-    if (foodSizeSelect.value && foodGrams.value !== foodSizeSelect.value) foodSizeSelect.value = "";
+
+  // Steppers move in whole units (half a unit below 1), or 10 g at a time.
+  function step(dir) {
+    const qty = parseFloat(foodQty.value) || 0;
+    let next;
+    if (foodUnit.value === "g") next = Math.max(10, qty + dir * 10);
+    else if (dir > 0) next = qty < 1 ? 1 : Math.floor(qty) + 1;
+    else next = qty > 1 ? Math.ceil(qty) - 1 : 0.5;
+    foodQty.value = next;
     updatePreview();
-  });
+  }
+  document.getElementById("qtyMinus").addEventListener("click", () => step(-1));
+  document.getElementById("qtyPlus").addEventListener("click", () => step(1));
   foodQty.addEventListener("input", updatePreview);
   foodSelect.addEventListener("change", updateFoodInputs);
 
   document.getElementById("quickAddFood").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const foodId = Number(foodSelect.value);
-    const meal = document.getElementById("foodMeal").value;
-    if (!foodId) return;
-
-    let servings, grams;
-    const gramsVisible = foodGrams.style.display !== "none";
-    const gramsVal = gramsVisible ? parseFloat(foodGrams.value) : NaN;
-    if (Number.isFinite(gramsVal) && gramsVal > 0) {
-      const food = foodsById.get(foodId);
-      if (!food || !food.servingSizeG) {
-        toast("This food doesn't have a serving size in grams — log it by quantity instead.");
-        return;
-      }
-      grams = gramsVal;
-      servings = gramsVal / food.servingSizeG;
-    } else {
-      servings = parseFloat(foodQty.value);
-      if (!servings) return;
+    const food = foodsById.get(Number(foodSelect.value));
+    const qty = parseFloat(foodQty.value) || 0;
+    if (!food || qty <= 0) {
+      toast("Choose a food and an amount to log.");
+      return;
     }
-
-    await db.add("foodLogs", { date: dateStr, foodId, servings, grams: grams || null, meal });
+    const unit = unitOf(food, foodUnit.value);
+    const byGrams = unit.key === "g";
+    await db.add("foodLogs", {
+      date: dateStr,
+      foodId: food.id,
+      servings: servingsFor(food, unit, qty),
+      grams: unit.grams ? qty * unit.grams : null,
+      // A count ("3 x medium roti") is kept for display; raw grams speak for themselves.
+      quantity: byGrams ? null : qty,
+      unitLabel: byGrams ? null : unit.label,
+      meal: document.getElementById("foodMeal").value,
+    });
     toast("Food logged");
     renderDashboard();
   });

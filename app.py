@@ -87,7 +87,7 @@ def day_totals(log_date):
     nutrient_select = ",\n               ".join(f"f.{k} * fl.servings AS {k}" for k in NUTRIENT_KEYS)
     food_rows = conn.execute(
         f"""
-        SELECT fl.id, fl.meal, f.name, f.serving_unit, fl.servings, fl.grams,
+        SELECT fl.id, fl.meal, f.name, f.serving_unit, fl.servings, fl.grams, fl.quantity, fl.unit_label,
                f.calories * fl.servings AS calories,
                f.protein_g * fl.servings AS protein_g,
                f.carbs_g * fl.servings AS carbs_g,
@@ -175,7 +175,7 @@ def dashboard():
     # Per-serving nutrition for every food, so the log form can preview what
     # a given weight/quantity adds before it's submitted.
     foods_nutrition = {
-        f["id"]: {k: f[k] for k in RECIPE_NUTRITION_KEYS} | {"serving_size_g": f["serving_size_g"]}
+        f["id"]: {k: f[k] for k in RECIPE_NUTRITION_KEYS} | {"serving_size_g": f["serving_size_g"], "units": food_units(f)}
         for f in foods
     }
 
@@ -214,22 +214,30 @@ def log_food():
     log_date = request.form["log_date"]
     food_id = request.form["food_id"]
     meal = request.form.get("meal") or "other"
-    grams = request.form.get("grams")
     conn = db.get_db()
+    food = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
+    unit_key = request.form.get("unit") or "serving"
+    unit = next((u for u in food_units(food) if u["key"] == unit_key), None) if food else None
+    try:
+        quantity = float(request.form.get("quantity") or 0)
+    except ValueError:
+        quantity = 0
+    if not unit or quantity <= 0:
+        flash("Choose a food and an amount to log.")
+        return redirect(url_for("dashboard", date=log_date))
 
-    if grams:
-        food = conn.execute("SELECT serving_size_g FROM foods WHERE id = ?", (food_id,)).fetchone()
-        if not food or not food["serving_size_g"]:
-            flash("This food doesn't have a serving size in grams yet — log it by quantity, or add one from its Edit page.")
-            return redirect(url_for("dashboard", date=log_date))
-        servings = float(grams) / food["serving_size_g"]
+    if unit["grams"]:
+        grams = quantity * unit["grams"]
+        servings = grams / food["serving_size_g"]
     else:
-        servings = request.form["servings"]
         grams = None
+        servings = quantity
+    # A count ("3 x medium roti") is kept for display; raw grams speak for themselves.
+    unit_label = None if unit_key == "g" else unit["label"]
 
     conn.execute(
-        "INSERT INTO food_logs (log_date, food_id, servings, grams, meal) VALUES (?, ?, ?, ?, ?)",
-        (log_date, food_id, servings, grams, meal),
+        "INSERT INTO food_logs (log_date, food_id, servings, grams, quantity, unit_label, meal) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (log_date, food_id, servings, grams, None if unit_key == "g" else quantity, unit_label, meal),
     )
     conn.commit()
     flash("Food logged.")
@@ -319,6 +327,29 @@ def parse_size_presets(raw):
         return json.loads(raw) if raw else []
     except (TypeError, ValueError):
         return []
+
+
+def unit_text(label):
+    """'1 medium (~40g)' -> 'medium (~40g)', so a count reads '3 x medium (~40g)'."""
+    return re.sub(r"^1\s+", "", (label or "").strip()) or "serving"
+
+
+def food_units(food):
+    """Ways to measure a food when logging it: its serving, each quick-pick size, and raw grams.
+
+    `grams` is grams per one unit (None for a serving with no known weight);
+    the log form multiplies it by the count the user enters.
+    """
+    serving_g = food["serving_size_g"]
+    units = [{"key": "serving", "label": unit_text(food["serving_unit"]), "grams": serving_g}]
+    if serving_g:
+        for i, p in enumerate(parse_size_presets(food["size_presets"])):
+            if p["grams"] == serving_g:
+                continue
+            label = p["label"] if re.search(r"\d", p["label"]) else f'{p["label"]} ({p["grams"]:g}g)'
+            units.append({"key": f"size{i}", "label": unit_text(label), "grams": p["grams"]})
+        units.append({"key": "g", "label": "grams / ml", "grams": 1})
+    return units
 
 
 def _food_form_values():
@@ -552,7 +583,7 @@ def settings():
 EXPORT_TABLES = {
     "foods": ["id", "name", "serving_unit", "category", "serving_size_g", "size_presets", "calories", "protein_g", "carbs_g", "fat_g"] + NUTRIENT_KEYS,
     "exercises": ["id", "name", "unit", "calories_per_unit"],
-    "food_logs": ["id", "log_date", "food_id", "servings", "grams", "meal"],
+    "food_logs": ["id", "log_date", "food_id", "servings", "grams", "quantity", "unit_label", "meal"],
     "exercise_logs": ["id", "log_date", "exercise_id", "quantity"],
     "weight_logs": ["id", "log_date", "weight_kg"],
     "recipes": ["id", "food_id", "name", "yields_servings"],
